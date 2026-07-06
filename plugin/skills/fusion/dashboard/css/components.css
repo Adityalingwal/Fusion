@@ -1,0 +1,125 @@
+/* Self-contained visual components shared across the dashboard: the thin warm-grey scrollbar,
+   the fusion spinner, skeleton loading rows, and the confirm-modal entrance animations.
+   Page structure / sidebar / responsive rules live in layout.css. */
+
+/* Firefox / standards path — WebKit uses the ::-webkit-scrollbar rules below. Both render the same
+   thin, warm-grey thumb on a transparent track so the scrollbar looks identical across engines
+   (without this, Firefox falls back to its default full-width system scrollbar). */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #D5D3CA transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #D5D3CA;
+  border-radius: 99px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #B5B3AA;
+}
+
+.fusion-loader {
+  position: relative;
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+}
+
+/* Spinning two-tone ring. No box-shadow on this element: a hard shadow on a rotating ring orbits
+   with it and reads as a wobble (the old look). The ring alone carries the motion. */
+.fusion-loader::before {
+  content: "";
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 3px solid #EFEDE7;
+  border-top-color: #1A1917;
+  border-right-color: #1A1917;
+  animation: fusion-spin 720ms linear infinite;
+}
+
+/* Static center dot keeps the brutalist hard shadow — it doesn't rotate, so the shadow stays put. */
+.fusion-loader::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #1A1917;
+  box-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.28);
+}
+
+.runs-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 10rem;
+}
+
+/* Skeleton run rows shown while a folder's runs load. Each row matches a real run row's 32px height
+   so the swap to real content doesn't shift the layout; the run count is known up front so we render
+   exactly that many placeholders (capped). */
+.skeleton-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  min-height: 32px;
+}
+.sk-shimmer {
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.06) 25%, rgba(0, 0, 0, 0.13) 37%, rgba(0, 0, 0, 0.06) 63%);
+  background-size: 400% 100%;
+  animation: sk-sheen 1.4s ease infinite;
+}
+.sk-dot { width: 6px; height: 6px; border-radius: 999px; flex: none; }
+.sk-title { height: 10px; flex: 1 1 auto; min-width: 0; max-width: 58%; }
+.sk-date { height: 10px; width: 44px; flex: none; margin-left: auto; }
+
+@keyframes fusion-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sk-sheen {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fusion-loader::before { animation: none; }
+  .sk-shimmer { animation: none; }
+}
+
+/* Confirmation modal entrance — a soft fade on the overlay and a small pop on the card so it
+   doesn't snap in. Purely cosmetic; the modal works without it. */
+.confirm-modal:not(.hidden) {
+  animation: confirm-fade 120ms ease-out;
+}
+
+.confirm-modal:not(.hidden) .confirm-modal-card {
+  animation: confirm-pop 150ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes confirm-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes confirm-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}

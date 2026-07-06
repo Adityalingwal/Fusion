@@ -1,0 +1,204 @@
+/* Manrope = everything with words — UI chrome (sidebar, buttons, headers) AND rendered document
+   text (briefs, reports, plans, tables). One text face so the whole app reads as one voice.
+   Geist Mono = code only.
+
+   Fonts are vendored locally (dashboard/vendor/fonts/, latin subset) — no fonts.googleapis.com at
+   runtime, so the dashboard renders identically offline. To refresh, re-run the fetch that produced
+   these woff2 files against the same Google Fonts css2 URL. */
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 400; font-display: swap; src: url('../vendor/fonts/manrope-400.woff2') format('woff2'); }
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 500; font-display: swap; src: url('../vendor/fonts/manrope-500.woff2') format('woff2'); }
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 600; font-display: swap; src: url('../vendor/fonts/manrope-600.woff2') format('woff2'); }
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 700; font-display: swap; src: url('../vendor/fonts/manrope-700.woff2') format('woff2'); }
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 800; font-display: swap; src: url('../vendor/fonts/manrope-800.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('../vendor/fonts/geist-mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('../vendor/fonts/geist-mono-500.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('../vendor/fonts/geist-mono-600.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('../vendor/fonts/geist-mono-700.woff2') format('woff2'); }
+
+body {
+  background-color: #F9F6EE;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.06) 1.2px, transparent 0);
+  background-size: 24px 24px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.dashboard-sidebar {
+  position: relative;
+  z-index: 10; /* lift above <main> so the right-edge shadow paints over it instead of being covered */
+  width: 20rem;
+  box-shadow: 8px 0 24px -4px rgba(0, 0, 0, 0.4);
+  /* border-right-width is in the list so the sidebar's black edge shrinks away WITH the panel
+     instead of vanishing on the first frame of the collapse. */
+  transition: width 180ms ease, left 180ms ease, box-shadow 180ms ease, border-right-width 180ms ease;
+}
+
+/* During the very first paint the sidebar's restored collapsed state is applied by the inline
+   script in <body>; suppressing the transitions until `load` stops that initial state from
+   animating in as a flash. Real toggle clicks (after load) animate normally. */
+body.sidebar-preload .dashboard-sidebar,
+body.sidebar-preload .dashboard-sidebar .sidebar-brand-header,
+body.sidebar-preload .dashboard-sidebar #runs-list,
+body.sidebar-preload .main-sidebar-toggle,
+body.sidebar-preload #details-header {
+  transition: none !important;
+}
+
+/* The sidebar header and the run-details header share ONE fixed height so their bottom borders
+   line up as a single continuous line across the whole app. Vertical padding is owned here, not
+   by Tailwind utilities — vendored Tailwind and this file share equal specificity, so keeping the
+   padding here (not as a utility class) avoids relying on stylesheet load order. */
+.sidebar-brand-header {
+  height: 4rem;
+  padding: 0 1.25rem;
+}
+
+#details-header {
+  padding: 1.5rem 1.5rem 1rem;
+  /* Glides in sync with the sidebar's 180ms width animation when collapse shifts the title
+     right to clear the floating toggle — without this the title jumps on frame one. */
+  transition: padding-left 180ms ease;
+}
+
+@media (min-width: 640px) {
+  #details-header {
+    height: 4rem;
+    padding: 0 1.5rem;
+  }
+}
+
+.sidebar-scrim,
+.mobile-topbar {
+  display: none;
+}
+
+/* The floating "open sidebar" toggle. Hidden via visibility (not display) so it can fade in.
+   top centers the 38px button on the 4rem header's midline, matching the in-sidebar toggle —
+   sitting lower reads as glued to the header's bottom border. The button carries no Tailwind
+   display utilities on purpose — vendored Tailwind and this file share equal specificity, so its
+   display/positioning lives here to avoid relying on stylesheet load order. */
+.main-sidebar-toggle {
+  position: absolute;
+  top: 0.8125rem;
+  left: 1.25rem;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  visibility: hidden;
+  opacity: 0;
+}
+
+/* Transition lives only on the shown state: appearing fades in AFTER the panel is mostly gone
+   (delay), while expanding hides the button on frame one — the returning sidebar replaces it. */
+body.sidebar-collapsed .main-sidebar-toggle {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 120ms ease 100ms;
+}
+
+body.sidebar-collapsed .dashboard-sidebar {
+  width: 0;
+  border-right-width: 0;
+  box-shadow: none;
+}
+
+/* Desktop collapse slides the panel out as ONE solid piece: the sidebar's direct children keep
+   their full 20rem width (so text never reflows/crushes as the width shrinks) and translate left
+   exactly in sync with the closing edge. Scoped to desktop — below 900px the whole fixed-position
+   panel slides via `left` instead, and its width can be under 20rem (86vw). */
+@media (min-width: 900px) {
+  .dashboard-sidebar .sidebar-brand-header,
+  .dashboard-sidebar #runs-list {
+    width: 20rem;
+    transition: transform 180ms ease;
+  }
+
+  body.sidebar-collapsed .dashboard-sidebar .sidebar-brand-header,
+  body.sidebar-collapsed .dashboard-sidebar #runs-list {
+    transform: translateX(-20rem);
+  }
+}
+
+/* Shift details-header content when sidebar is collapsed to avoid toggle button overlap.
+   Desktop-only: on narrow screens the toggle lives in the in-flow mobile top strip, so the
+   header has nothing to clear — the indent there just pushed everything right for no reason. */
+@media (min-width: 900px) {
+  body.sidebar-collapsed #details-header {
+    padding-left: 4.5rem !important;
+  }
+}
+
+.report-card,
+.artifact-card {
+  min-width: 0;
+}
+
+.report-body,
+.artifact-body {
+  min-height: 0;
+}
+
+@media (max-width: 899.98px) {
+  .dashboard-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    left: 0;
+    z-index: 40;
+    width: min(20rem, 86vw);
+    box-shadow: 10px 0 0 rgba(0, 0, 0, 0.18);
+  }
+
+  body.sidebar-collapsed .dashboard-sidebar {
+    left: -22rem;
+    width: min(20rem, 86vw);
+    box-shadow: none;
+  }
+
+  /* On narrow screens the toggle lives in the in-flow top strip below — the floating desktop
+     button would just hover over it in dead space. */
+  .main-sidebar-toggle {
+    display: none;
+  }
+
+  /* App strip: sidebar toggle + wordmark. In normal flow (main is a flex column), so the content
+     below needs no padding-top hack and nothing floats over an empty band. The sidebar overlay +
+     scrim (z 40/35) cover it while open. Height matches .sidebar-brand-header (4rem) so the strip's
+     bottom border and the sidebar overlay's bottom border sit on the SAME line — otherwise a slimmer
+     strip left a ~12px step at the seam where the open sidebar meets the main column. */
+  .mobile-topbar {
+    display: flex;
+    height: 4rem;
+    /* 1.5rem matches the header/tabs/content left rhythm so the toggle, title, tabs and cards
+       all sit on the same 24px line. */
+    padding: 0 1.5rem;
+  }
+
+  body:not(.sidebar-collapsed) .sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    display: block;
+    background: rgba(26, 25, 23, 0.32);
+  }
+}
+
+/* Phones: the Delete button drops its text and becomes a square icon button, so the header's
+   title block and actions fit on ONE row instead of stacking. The confirm modal is the real
+   guard against accidental taps, not the label. */
+@media (max-width: 639.98px) {
+  .delete-btn-label {
+    display: none;
+  }
+
+  /* Square icon button (14px icon + 10px padding + 2px borders = 38px each way). */
+  #delete-btn {
+    padding: 0.625rem;
+  }
+
+  /* Single-row header sits tighter on phones — symmetric padding around the two text lines.
+     (640px+ keeps the fixed 4rem header height, so this stays phone-scoped.) */
+  #details-header {
+    padding: 1rem 1.5rem;
+  }
+}

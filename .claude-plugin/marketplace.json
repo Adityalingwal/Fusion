@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "fusion",
+  "owner": {
+    "name": "Aditya Lingwal"
+  },
+  "description": "Fusion — a multi-model planning council packaged as a native Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "fusion",
+      "source": "./plugin",
+      "description": "Multi-model planning council for Claude Code — Claude and Codex plan the same brief independently, then the host synthesizes one plan with disagreements kept visible."
+    }
+  ]
+}

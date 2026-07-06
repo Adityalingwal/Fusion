@@ -1,0 +1,218 @@
+/* Markdown typography — the document layer of the dashboard (briefs, leg reports, final plans).
+   Documents render in Manrope, the same face as the UI chrome and headings, so the whole app
+   reads as one voice. Hierarchy comes from scale, spacing and weight — never from hue or a
+   second body font; the theme is monochrome. */
+.markdown-content {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: #2E2D2A;
+  text-rendering: optimizeLegibility;
+}
+
+/* Cap the measure: past ~75 characters per line the eye loses the return sweep and reading
+   slows down. Children are capped — not the container — so the card's scrollbar stays on the
+   card edge instead of floating mid-card. */
+.markdown-content > * {
+  max-width: 76ch;
+}
+
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  font-family: 'Manrope', sans-serif;
+  color: #1A1917;
+  letter-spacing: -0.01em;
+}
+
+.markdown-content h1 {
+  font-size: 1.45rem;
+  font-weight: 800;
+  margin: 1.75rem 0 0.9rem;
+  border-bottom: 2px solid #000000;
+  padding-bottom: 0.4rem;
+}
+
+.markdown-content h2 {
+  font-size: 1.15rem;
+  font-weight: 800;
+  margin: 1.9rem 0 0.6rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  padding-bottom: 0.3rem;
+}
+
+.markdown-content h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 1.4rem 0 0.5rem;
+}
+
+.markdown-content h4 {
+  font-size: 0.8rem;
+  font-weight: 800;
+  margin: 1.25rem 0 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4A4842;
+}
+
+.markdown-content p {
+  margin-bottom: 1rem;
+}
+
+.markdown-content strong {
+  color: #000000;
+  font-weight: 700;
+}
+
+.markdown-content ul {
+  margin-left: 1.4rem;
+  margin-bottom: 1rem;
+  list-style-type: disc;
+}
+
+.markdown-content ol {
+  margin-left: 1.4rem;
+  margin-bottom: 1rem;
+  list-style-type: decimal;
+}
+
+.markdown-content li {
+  margin-bottom: 0.35rem;
+  padding-left: 0.15rem;
+}
+
+.markdown-content li::marker {
+  color: #8C8B82;
+}
+
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin-top: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-content code {
+  background-color: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  padding: 0.125rem 0.3rem;
+  border-radius: 4px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.8em;
+  font-weight: 500;
+  color: #1A1917;
+}
+
+.markdown-content pre {
+  background-color: #1A1917; /* dark pre blocks */
+  border: 2px solid #000000;
+  padding: 1.25rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  box-shadow: 3px 3px 0px 0px rgba(0, 0, 0, 1);
+  line-height: 1.65;
+}
+
+.markdown-content pre code {
+  background-color: transparent;
+  border: none;
+  color: #FAF7F2;
+  padding: 0;
+  font-size: 0.82em;
+  font-weight: 400;
+}
+
+.markdown-content blockquote {
+  border-left: 4px solid #1A1917;
+  background-color: rgba(0, 0, 0, 0.03);
+  border-top: 1px solid #000000;
+  border-right: 1px solid #000000;
+  border-bottom: 1px solid #000000;
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 1rem;
+  border-radius: 0 8px 8px 0;
+  color: #4A4842;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 2px solid #000000;
+  margin: 1.75rem 0;
+}
+
+/* Horizontal scroll box wrapping every table (added in renderMarkdown). A table wider than its card
+   scrolls sideways inside this box instead of being clipped by the card's overflow:hidden — works at
+   any card width, so a genuinely wide table scrolls on a phone AND on a large screen. Narrow tables
+   still fill the width and never show a scrollbar. max-width:100% (specificity beats the 76ch measure
+   cap on `.markdown-content > *`) keeps the box within the card. Scrollbar matches .custom-scrollbar. */
+.markdown-content .table-scroll {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: #D5D3CA transparent;
+}
+
+.markdown-content .table-scroll::-webkit-scrollbar {
+  height: 7px;
+}
+
+.markdown-content .table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-content .table-scroll::-webkit-scrollbar-thumb {
+  background: #D5D3CA;
+  border-radius: 99px;
+}
+
+/* marked renders GFM tables; without these rules they fall back to browser defaults, which is
+   the single fastest way for a document to look like 1998. The vertical margin lives on the
+   scroll box above, so the table itself carries none. */
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  border: 2px solid #000000;
+}
+
+.markdown-content thead th {
+  background-color: #1A1917;
+  color: #FAF7F2;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+}
+
+.markdown-content tbody td {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  vertical-align: top;
+}
+
+.markdown-content tbody tr:nth-child(even) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.markdown-content a {
+  color: #1A1917;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content a:hover {
+  color: #4A4842;
+}

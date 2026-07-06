@@ -1,0 +1,27 @@
+/* Build input for vendor/tailwind.css — compiled by ./build-css.sh (Tailwind v3).
+   Preflight (base) is included on purpose: the CDN served it too, so the hand-written
+   CSS in css/ was authored assuming that reset is active. Keep the three layers. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* Brutalist button — shared core. Per-button size/radius/extras stay inline as utilities. */
+  .btn-brutal {
+    @apply bg-dm-bg text-dm-text font-bold border-2 border-black transition-all duration-100
+      shadow-[2px_2px_0px_rgba(0,0,0,1)]
+      hover:bg-dm-panel-beige hover:translate-x-[0.5px] hover:translate-y-[0.5px] hover:shadow-[1.5px_1.5px_0px_rgba(0,0,0,1)]
+      active:translate-x-[2px] active:translate-y-[2px] active:shadow-none;
+  }
+  /* Tab pill — shared geometry; visual state via .tab-idle / .tab-active. */
+  .tab-btn {
+    @apply border-2 border-black text-xs px-4 py-1.5 rounded-lg transition-all duration-100;
+  }
+  .tab-idle {
+    @apply bg-dm-bg text-dm-text font-bold shadow-[2px_2px_0px_rgba(0,0,0,1)]
+      hover:bg-dm-panel-beige hover:translate-x-[0.5px] hover:translate-y-[0.5px] hover:shadow-[1.5px_1.5px_0px_rgba(0,0,0,1)];
+  }
+  .tab-active {
+    @apply bg-dm-accent text-white font-extrabold shadow-none translate-x-[2px] translate-y-[2px];
+  }
+}

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fusion</title>
+  <!-- Marked Markdown Parser (vendored + pinned locally, no CDN) -->
+  <script src="dashboard/vendor/marked.min.js"></script>
+  <!-- DOMPurify — sanitizes rendered markdown before it ever touches innerHTML (vendored locally) -->
+  <script src="dashboard/vendor/purify.min.js"></script>
+
+  <!-- Tailwind, pre-compiled + vendored (no cdn.tailwindcss.com, no eval, works offline).
+       Rebuild with dashboard/build-css.sh after adding/changing any Tailwind class. Loads first so
+       the hand-written CSS below can override utilities where needed. -->
+  <link rel="stylesheet" href="dashboard/vendor/tailwind.css">
+  <link rel="stylesheet" href="dashboard/css/layout.css">
+  <link rel="stylesheet" href="dashboard/css/components.css">
+  <link rel="stylesheet" href="dashboard/css/markdown.css">
+</head>
+<body class="h-screen min-h-screen flex overflow-hidden font-sans text-dm-text antialiased">
+
+  <!-- Resolve the sidebar's collapsed state BEFORE the sidebar paints. Without this, the HTML
+       renders expanded and the JS below (DOMContentLoaded) restores a collapsed preference AFTER
+       first paint — which the CSS width transition then animates in as a visible open→close flash.
+       Runs synchronously as the first body child so document.body already exists. `sidebar-preload`
+       kills the transition for the initial load; it's removed after `load`, restoring animations
+       for real clicks. Mirrors getInitialSidebarState() in navigation.js — keep the two in sync. -->
+  <script>
+    (function () {
+      document.body.classList.add('sidebar-preload');
+      try {
+        var collapsed;
+        if (window.innerWidth < 900) {
+          collapsed = true;
+        } else {
+          var stored = window.localStorage.getItem('fusion:sidebar-collapsed');
+          collapsed = stored === null ? false : stored === 'true';
+        }
+        if (collapsed) document.body.classList.add('sidebar-collapsed');
+      } catch (e) { /* localStorage blocked → fall through to the expanded default */ }
+      window.addEventListener('load', function () {
+        requestAnimationFrame(function () {
+          document.body.classList.remove('sidebar-preload');
+        });
+      });
+    })();
+  </script>
+
+  <!-- Left Sidebar (MonitorYT Dark Border panel) -->
+  <aside id="sidebar" class="dashboard-sidebar bg-dm-bg border-r-2 border-black flex flex-col shrink-0 overflow-hidden">
+    
+    <!-- Branding Header -->
+    <!-- Vertical padding/height live in layout.css so this header and #details-header stay the
+         exact same height — their bottom borders must read as ONE continuous line. -->
+    <div class="sidebar-brand-header flex items-center justify-between gap-4 border-b-2 border-black">
+      <button onclick="showRunsHome()" class="sidebar-brand-mark min-w-0 text-left flex items-center gap-2" title="Back to latest run" aria-label="Fusion home">
+        <div class="sidebar-label font-extrabold tracking-tight text-dm-text text-xl uppercase">
+          Fusion
+        </div>
+      </button>
+      <button id="sidebar-toggle" onclick="toggleSidebar()" class="p-1.5 rounded-lg border border-black/10 hover:bg-dm-panel-beige transition-colors text-dm-text-soft flex items-center justify-center" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor" class="w-5 h-5">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v18" />
+        </svg>
+      </button>
+    </div>
+    
+    <!-- Timeline scroll area -->
+    <div id="runs-list" class="flex-1 overflow-y-auto px-4 pt-3 pb-6 custom-scrollbar">
+      <div class="runs-loading" aria-label="Loading runs">
+        <span class="fusion-loader"></span>
+      </div>
+    </div>
+  </aside>
+
+  <button id="sidebar-scrim" class="sidebar-scrim" onclick="setSidebarCollapsed(true)" aria-label="Close sidebar"></button>
+
+  <!-- Main Canvas Card (MonitorYT Layout) -->
+  <main class="flex-1 min-w-0 flex flex-col overflow-hidden bg-dm-bg relative">
+    <!-- Mobile top strip (<900px only; display owned by layout.css .mobile-topbar). On narrow
+         screens the sidebar toggle lives HERE, in-flow, instead of floating alone over an empty
+         band above the pushed-down content. Hidden on desktop, where the floating
+         #main-sidebar-toggle takes over. -->
+    <div id="mobile-topbar" class="mobile-topbar items-center gap-3 border-b-2 border-black bg-dm-bg shrink-0">
+      <button id="mobile-topbar-toggle" onclick="toggleSidebar()" class="p-1.5 rounded-lg border border-black/10 hover:bg-dm-panel-beige transition-colors text-dm-text-soft flex items-center justify-center" aria-label="Open sidebar" aria-expanded="false" title="Open sidebar">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor" class="w-5 h-5">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v18" />
+        </svg>
+      </button>
+      <div class="font-extrabold tracking-tight text-dm-text text-base uppercase">Fusion</div>
+    </div>
+    <!-- Show/hide + positioning are owned exclusively by layout.css (.main-sidebar-toggle rules,
+         visibility/opacity so it can fade in). Do not add display or position utilities to this
+         button — vendored Tailwind and layout.css share equal specificity, so ordering must not be
+         relied on; keeping these rules only in layout.css avoids a class-vs-rule tug of war. -->
+    <button id="main-sidebar-toggle" onclick="toggleSidebar()" class="main-sidebar-toggle bg-dm-bg hover:bg-dm-panel-beige p-2 rounded-lg border border-black/10 transition-colors text-dm-text-soft" aria-label="Open sidebar" aria-expanded="false" title="Open sidebar">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor" class="w-5 h-5">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v18" />
+      </svg>
+    </button>
+    
+    <!-- Empty state: no run selected (zero runs yet, user went home explicitly, or after a delete).
+         A centered glyph + heading anchors the otherwise-blank canvas so it reads as an intentional
+         home screen, matching the sidebar's "No projects yet" zero-state polish. The glyph's stacked
+         layers nod at Fusion's two model plans merging into one final plan. -->
+    <div id="empty-state" class="flex-1 flex flex-col items-center justify-center p-12 text-center">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 text-dm-muted opacity-80 mb-4" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6.429 9.75 2.25 12l4.179 2.25m0-4.5 5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0 4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0-5.571 3-5.571-3" />
+      </svg>
+      <p class="text-lg font-extrabold text-dm-text mb-2">No run selected</p>
+      <p class="text-xs text-dm-text-soft max-w-md leading-relaxed">Pick a run from the sidebar to see its brief, both model reports, and the final plan — or start a new one with <code class="font-mono bg-dm-panel-beige border border-black/10 px-1.5 py-0.5 rounded">fusion plan</code>.</p>
+    </div>
+
+    <!-- Main Workspace Area (Hidden initially) -->
+    <div id="details-panel" class="hidden flex-1 min-h-0 flex flex-col h-full overflow-hidden">
+      
+      <!-- Header bar inside white workspace -->
+      <!-- Always a single row (title block + actions): on phones the Delete button collapses to an
+           icon (see .delete-btn-label rules in layout.css) instead of stacking a whole extra row. -->
+      <div id="details-header" class="border-b-2 border-black flex items-center justify-between gap-4 shrink-0 bg-dm-bg">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-3 mb-1">
+            <span id="run-title" class="font-extrabold text-lg text-dm-text truncate">Run title</span>
+            <span id="run-status-badge" class="shrink-0 whitespace-nowrap px-2.5 py-0.5 rounded border-2 border-black text-[9px] font-mono font-bold tracking-widest uppercase bg-dm-panel-beige text-dm-text shadow-[1.5px_1.5px_0px_rgba(0,0,0,1)]">COMPLETED</span>
+          </div>
+          <p id="run-meta-desc" class="text-xs text-dm-muted font-mono font-semibold truncate">project · date</p>
+        </div>
+
+        <div class="flex items-center gap-2.5 shrink-0">
+          <button id="delete-btn" class="btn-brutal text-xs py-2 px-3.5 rounded-xl flex items-center gap-1.5">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor" class="w-3.5 h-3.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+            </svg>
+            <span class="delete-btn-label">Delete Run</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs (Sleek Brutalist buttons) -->
+      <div class="px-6 py-2.5 border-b border-black/10 flex gap-2 overflow-x-auto shrink-0 scrollbar-none bg-dm-bg/60">
+        <button onclick="switchTab('brief')" id="tab-brief" class="tab-btn tab-active">
+          Brief
+        </button>
+        <button onclick="switchTab('claude')" id="tab-claude" class="tab-btn tab-idle">
+          Claude Report
+        </button>
+        <button onclick="switchTab('codex')" id="tab-codex" class="tab-btn tab-idle">
+          Codex Report
+        </button>
+        <button onclick="switchTab('final')" id="tab-final" class="tab-btn tab-idle">
+          Final Plan
+        </button>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div class="flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar bg-dm-bg">
+        
+        <!-- Tab: Brief -->
+        <div id="content-brief" class="tab-content min-h-0">
+          <div class="artifact-card bg-dm-bg border-2 border-black rounded-xl p-5 shadow-[4px_4px_0px_rgba(0,0,0,1)] flex flex-col overflow-hidden">
+            <div class="flex justify-between items-center pb-2.5 border-b border-black/10 mb-3 shrink-0 gap-3">
+              <h4 class="font-extrabold text-xs text-dm-text flex items-center gap-2 uppercase tracking-wider">
+                <span class="inline-block w-1.5 h-1.5 bg-dm-accent rounded-full border border-black/10"></span>
+                Brief
+              </h4>
+              <button id="brief-copy-btn" onclick="copyArtifact(this, 'brief')" class="hidden btn-brutal text-xs py-2 px-3 rounded-lg shrink-0" aria-label="Copy brief">
+                Copy
+              </button>
+            </div>
+            <div id="brief-content" class="artifact-body flex-1 markdown-content pr-1">
+              <!-- Rendered brief.md -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Claude Report -->
+        <div id="content-claude" class="tab-content hidden min-h-0">
+          <div class="report-card bg-dm-bg border-2 border-black rounded-xl p-5 shadow-[4px_4px_0px_rgba(0,0,0,1)] flex flex-col overflow-hidden transition-all duration-300">
+            <div class="flex justify-between items-center pb-2.5 border-b border-black/10 mb-3 shrink-0 gap-3">
+              <h4 class="font-extrabold text-xs text-dm-text flex items-center gap-2 uppercase tracking-wider">
+                <span class="inline-block w-1.5 h-1.5 bg-dm-accent rounded-full border border-black/10"></span>
+                Claude Report
+              </h4>
+              <button id="claude-copy-btn" onclick="copyArtifact(this, 'claude')" class="hidden btn-brutal text-xs py-2 px-3 rounded-lg shrink-0" aria-label="Copy Claude report">
+                Copy
+              </button>
+            </div>
+            <div id="report-claude-content" class="report-body flex-1 markdown-content pr-1">
+              <!-- Rendered claude-report.md -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Codex Report -->
+        <div id="content-codex" class="tab-content hidden min-h-0">
+          <div class="report-card bg-dm-bg border-2 border-black rounded-xl p-5 shadow-[4px_4px_0px_rgba(0,0,0,1)] flex flex-col overflow-hidden transition-all duration-300">
+            <div class="flex justify-between items-center pb-2.5 border-b border-black/10 mb-3 shrink-0 gap-3">
+              <h4 class="font-extrabold text-xs text-dm-text flex items-center gap-2 uppercase tracking-wider">
+                <span class="inline-block w-1.5 h-1.5 bg-dm-accent rounded-full border border-black/10"></span>
+                Codex Report
+              </h4>
+              <button id="codex-copy-btn" onclick="copyArtifact(this, 'codex')" class="hidden btn-brutal text-xs py-2 px-3 rounded-lg shrink-0" aria-label="Copy Codex report">
+                Copy
+              </button>
+            </div>
+            <div id="report-codex-content" class="report-body flex-1 markdown-content pr-1">
+              <!-- Rendered codex-report.md -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Final Plan -->
+        <div id="content-final" class="tab-content hidden min-h-0">
+          <div class="artifact-card bg-dm-bg border-2 border-black rounded-xl p-5 shadow-[4px_4px_0px_rgba(0,0,0,1)] flex flex-col overflow-hidden">
+            <div class="flex justify-between items-center pb-2.5 border-b border-black/10 mb-3 shrink-0 gap-3">
+              <h4 class="font-extrabold text-xs text-dm-text flex items-center gap-2 uppercase tracking-wider">
+                <span class="inline-block w-1.5 h-1.5 bg-dm-accent rounded-full border border-black/10"></span>
+                Final Plan
+              </h4>
+              <button id="final-copy-btn" onclick="copyArtifact(this, 'final')" class="hidden btn-brutal text-xs py-2 px-3 rounded-lg shrink-0" aria-label="Copy final plan">
+                Copy
+              </button>
+            </div>
+            <div id="final-content-body" class="artifact-body flex-1 markdown-content pr-1">
+              <!-- Rendered plan content -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Themed confirmation / alert modal — replaces the browser's native confirm()/alert(), which
+       ignore the app theme. Driven by confirmModal() in utils.js; hidden until then. -->
+  <div id="confirm-modal" class="confirm-modal hidden fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-message">
+    <div id="confirm-modal-backdrop" class="absolute inset-0 bg-[rgba(26,25,23,0.45)]"></div>
+    <div class="confirm-modal-card relative bg-dm-bg border-2 border-black rounded-2xl shadow-[6px_6px_0px_rgba(0,0,0,1)] w-full max-w-md p-6">
+      <h3 id="confirm-modal-title" class="font-extrabold text-lg text-dm-text mb-2">Are you sure?</h3>
+      <p id="confirm-modal-message" class="text-sm text-dm-text-soft leading-relaxed mb-6 break-words"></p>
+      <div class="flex justify-end gap-2.5">
+        <button id="confirm-modal-cancel" type="button" class="btn-brutal text-sm py-2.5 px-4 rounded-xl">
+          Cancel
+        </button>
+        <button id="confirm-modal-confirm" type="button" class="btn-brutal text-sm py-2.5 px-4 rounded-xl">
+          Confirm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="dashboard/js/shared-state.js"></script>
+  <script src="dashboard/js/utils.js"></script>
+  <script src="dashboard/js/navigation.js"></script>
+  <script src="dashboard/js/api.js"></script>
+  <script src="dashboard/js/tree.js"></script>
+  <script src="dashboard/js/run-view.js"></script>
+</body>
+</html>
