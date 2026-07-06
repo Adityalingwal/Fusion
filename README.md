@@ -25,7 +25,7 @@ Fusion is distributed as a Claude Code plugin via its own marketplace.
 
 ```
 # 1. Add this repo as a marketplace (local clone or GitHub shorthand)
-/plugin marketplace add Adityalingwal/fusion
+/plugin marketplace add Adityalingwal/Fusion
 #   ...or from a local checkout:
 /plugin marketplace add /path/to/fusion
 
