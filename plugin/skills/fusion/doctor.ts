@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Fusion doctor — verify the subscription CLI is present + authenticated.
-// Claude Code is the host (always present when this runs); Codex (GPT-5.5) is the
+// Claude Code is the host (always present when this runs); Codex is the
 // external relay the runner drives.
 // Report, not silent: it prints the leg's state and exits non-zero if the external
 // relay is unusable, so install/setup surfaces the problem instead of failing quietly.
@@ -51,23 +51,23 @@ const warnings: string[] = [];
   line("Claude Code", ok.claude ? "✓ found (host)" : "✗ not found");
 }
 
-// Codex / GPT-5.5
+// Codex
 {
   const v = await run(["codex", "--version"]);
   if (v.code !== 0) {
     ok.codex = false;
-    line("Codex (GPT-5.5)", "✗ not found   → npm i -g @openai/codex");
+    line("Codex", "✗ not found   → npm i -g @openai/codex");
   } else {
     const s = await run(["codex", "login", "status"]);
     const h = await run(["codex", "exec", "--help"]);
     const flagsOk = h.code === 0 && hasAll(h.out, [...CODEX_REQUIRED_FLAGS]);
     ok.codex = codexLoggedIn(s.out) && flagsOk;
     if (!codexLoggedIn(s.out)) {
-      line("Codex (GPT-5.5)", "⚠ found, NOT logged in   → codex login");
+      line("Codex", "⚠ found, NOT logged in   → codex login");
     } else if (!flagsOk) {
-      line("Codex (GPT-5.5)", "⚠ found + authed, incompatible exec flags");
+      line("Codex", "⚠ found + authed, incompatible exec flags");
     } else {
-      line("Codex (GPT-5.5)", "✓ found + authed + flags");
+      line("Codex", "✓ found + authed + flags");
       warnings.push("Codex auth passed, but provider credits/quota are not guaranteed by status.");
     }
   }

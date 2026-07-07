@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Fusion runner (v1) — orchestrates the EXTERNAL relay of a Fusion run:
-//   - GPT-5.5 via `codex exec`  (ChatGPT subscription → zero API cost)
+//   - Codex via `codex exec`  (ChatGPT subscription → zero API cost)
 //
 // It deliberately does NOT run the Claude leg or the synthesis. The host Claude Code session
 // contributes its own (Claude) leg and does the final synthesis via the skill — a runner subprocess
