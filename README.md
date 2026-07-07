@@ -1,18 +1,18 @@
 # 🔀 Fusion
 
-**Fusion puts two powerful AI models — Claude and Codex — to work on your hardest tasks together, so you get a stronger result.**
+**Fusion puts two of the best AI models — Anthropic's Claude and OpenAI's GPT — to work on your hardest tasks together, so you get a stronger result.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-fbf0df?logo=bun&logoColor=black)](https://bun.sh)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 
-Fusion is a plugin for [Claude Code](https://claude.com/claude-code). When you have a big or tricky task, it asks **two AI models — Claude and Codex — to think about it separately**, then gives you **one clear plan** that combines their best ideas. It only *plans* the work — it never changes your code — and it uses the AI tools you already pay for, so there's **no extra cost**.
+Fusion is a plugin for [Claude Code](https://claude.com/claude-code). When you have a big or tricky task, it asks **two of the best AI models — Claude (from Anthropic) and GPT (from OpenAI) — to think about it separately**, then gives you **one clear plan** that combines their best ideas. It only *plans* the work — it never changes your code — and it runs on the AI tools you already pay for, so there's **no extra cost**.
 
 ```mermaid
 flowchart TD
     A["📝 Your task"] --> B["🟠 Claude thinks it through"]
-    A --> C["🟢 Codex thinks it through"]
+    A --> C["🟢 GPT thinks it through"]
     B --> D["🔀 Fusion compares both<br/>and checks the key points"]
     C --> D
     D --> E["✅ One clear plan for you"]
@@ -23,14 +23,14 @@ flowchart TD
 ## How it works
 
 1. You give Fusion your task.
-2. Claude and Codex each work on it **on their own** — neither sees the other's answer, so you get two honest, independent takes.
+2. Claude and GPT each work on it **on their own** — neither sees the other's answer, so you get two honest, independent takes.
 3. Fusion **compares the two**, checks the important points, and keeps any disagreements visible instead of hiding them.
 4. You get **one clear plan**. Every run is saved on your own computer, so you can look back at it later.
 
 ## Why Fusion
 
 - **Two minds, not one.** Two strong models look at your task, so you catch more and miss less.
-- **No extra cost.** It uses your existing Claude and Codex — you pay nothing more.
+- **No extra cost.** It runs on the Claude Code and Codex tools you already pay for — nothing more.
 - **It plans, it doesn't touch your code.** Safe by default.
 - **Everything stays on your computer.** Nothing is sent anywhere else.
 
@@ -50,8 +50,8 @@ flowchart TD
 ## What you need
 
 - **[Bun](https://bun.sh)** — the tool Fusion runs on.
-- **[Codex CLI](https://github.com/openai/codex)**, installed and logged in (`codex login`). Fusion uses whatever model you've already set in your own Codex settings — you don't configure anything here.
-- **[Claude Code](https://claude.com/claude-code)** — where you run Fusion.
+- **[Codex CLI](https://github.com/openai/codex)** (OpenAI), installed and logged in (`codex login`) — this is how Fusion reaches OpenAI's GPT. It uses whatever model you've already set in your own Codex settings, so you don't configure anything here.
+- **[Claude Code](https://claude.com/claude-code)** (Anthropic) — where you run Fusion; it provides the Claude side.
 
 ## Usage
 
