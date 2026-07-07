@@ -1,135 +1,90 @@
 # 🔀 Fusion
 
-**Two AI models plan your task independently. One consolidated plan comes out — with their disagreements kept visible, not hidden.**
+**Fusion puts two powerful AI models — Claude and Codex — to work on your hardest tasks together, so you get a stronger result.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-fbf0df?logo=bun&logoColor=black)](https://bun.sh)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
-![Status](https://img.shields.io/badge/status-early-orange)
 
-Fusion is a **planning council** for [Claude Code](https://claude.com/claude-code). It runs your brief through **Claude and Codex at the same time**, blind to each other, then the host synthesizes **one plan**. It is **plan-only** — it designs the work, it does not touch your code. And because it drives your already-installed `codex` CLI, there is **no extra API cost** beyond the subscriptions you already have.
+Fusion is a plugin for [Claude Code](https://claude.com/claude-code). When you have a big or tricky task, it asks **two AI models — Claude and Codex — to think about it separately**, then gives you **one clear plan** that combines their best ideas. It only *plans* the work — it never changes your code — and it uses the AI tools you already pay for, so there's **no extra cost**.
 
 ```mermaid
 flowchart TD
-    A["📝 Your task brief"] --> B["🟠 Claude leg"]
-    A --> C["🟢 Codex leg<br/>codex exec · read-only sandbox"]
-    B -.->|"blind — legs never see each other"| C
-    B --> D["🔀 Host synthesis<br/>maps agreement vs disagreement"]
+    A["📝 Your task"] --> B["🟠 Claude thinks it through"]
+    A --> C["🟢 Codex thinks it through"]
+    B --> D["🔀 Fusion compares both<br/>and checks the key points"]
     C --> D
-    D --> E["✅ One consolidated plan"]
-    E --> F["🗄️ Stored locally in SQLite<br/>~/.fusion/fusion.db"]
+    D --> E["✅ One clear plan for you"]
 ```
 
 ---
 
-## How it works (the 30-second version)
+## How it works
 
-1. You invoke Fusion with a task brief.
-2. Fusion spins up a **Codex leg** (via `codex exec`, in a read-only sandbox) while Claude writes its **own leg blind** — neither model sees the other's work, so neither anchors on it.
-3. The host reads both reports and maps where they **agree** and where they **disagree**.
-4. It synthesizes a **single consolidated plan** that keeps the disagreements visible instead of papering over them.
-5. Every run (brief, both legs, final plan) is stored locally in SQLite at `~/.fusion/fusion.db`. A local dashboard lets you browse past runs.
+1. You give Fusion your task.
+2. Claude and Codex each work on it **on their own** — neither sees the other's answer, so you get two honest, independent takes.
+3. Fusion **compares the two**, checks the important points, and keeps any disagreements visible instead of hiding them.
+4. You get **one clear plan**. Every run is saved on your own computer, so you can look back at it later.
 
 ## Why Fusion
 
-- **Disagreements stay visible.** Two independent models rarely agree on everything — Fusion surfaces the conflicts so *you* make the call, instead of one model quietly winning.
-- **No extra API cost.** It drives your existing `codex` CLI, which uses your own ChatGPT/Codex subscription and `~/.codex/config.toml`. You pay nothing beyond what you already have.
-- **Plan-only, so it's safe.** Fusion produces a plan and stops. It never writes into your project.
-- **Local & private.** Every run lives on your own machine. Nothing is sent anywhere except to the `codex` and `claude` CLIs you already use.
+- **Two minds, not one.** Two strong models look at your task, so you catch more and miss less.
+- **No extra cost.** It uses your existing Claude and Codex — you pay nothing more.
+- **It plans, it doesn't touch your code.** Safe by default.
+- **Everything stays on your computer.** Nothing is sent anywhere else.
 
-## Quick start (60 seconds)
+## Get started
 
 ```
-# 1. Add this repo as a plugin marketplace
+# 1. Add Fusion as a plugin source
 /plugin marketplace add Adityalingwal/Fusion
-#   ...or from a local checkout:
-/plugin marketplace add /path/to/fusion
 
-# 2. Install the plugin
+# 2. Install it
 /plugin install fusion@fusion
 
 # 3. Run your first plan
 /fusion:fusion plan <your task here>
 ```
 
-## Prerequisites
+## What you need
 
-- **[bun](https://bun.sh)** — the runtime Fusion is built on. `bun:sqlite` is built in, so no `bun install` is needed to *run* the plugin.
-- **[codex CLI](https://github.com/openai/codex)**, installed and **authenticated** (`codex login`). Fusion reads the **model and reasoning effort from your own `~/.codex/config.toml`** — it never pins a specific model, so whatever you configure is what it uses.
-- **[Claude Code](https://claude.com/claude-code)** (`claude`) — the host that runs the plugin and does the synthesis.
+- **[Bun](https://bun.sh)** — the tool Fusion runs on.
+- **[Codex CLI](https://github.com/openai/codex)**, installed and logged in (`codex login`). Fusion uses whatever model you've already set in your own Codex settings — you don't configure anything here.
+- **[Claude Code](https://claude.com/claude-code)** — where you run Fusion.
 
 ## Usage
 
-Invoke the skill from inside Claude Code:
-
-```
-/fusion:fusion plan <your task here>
-```
-
-Fusion runs both legs, synthesizes the plan, and prints it. Other commands:
-
 | Command | What it does |
 |---|---|
-| `/fusion:fusion plan <task>` | Run a full planning council and print the consolidated plan |
-| `/fusion:fusion` → dashboard step | Launch the on-demand local web UI to browse past runs |
-| `bun "${CLAUDE_SKILL_DIR}/fusion.ts" doctor` | Health-check your prerequisites (bun, codex auth, Claude Code) |
+| `/fusion:fusion plan <task>` | Run Fusion on a task and get one clear plan |
+| `/fusion:fusion` → dashboard | Open a local page to browse your past runs |
+| `bun "${CLAUDE_SKILL_DIR}/fusion.ts" doctor` | Check that everything is set up correctly |
 
-## When to use · When to skip
+## When to use it · When to skip it
 
-| Use Fusion when… | Skip Fusion when… |
+| Use Fusion when… | Skip it when… |
 |---|---|
-| The task is large or ambiguous and two perspectives help | The change is trivial (a typo, a one-liner, a rename) |
-| You want a plan *before* any code is written | You want code right now, not a plan |
-| You want the trade-offs surfaced, not decided for you | You already know exactly what to do |
+| The task is big, or you're not sure how to approach it | It's a tiny change — a typo or a one-line fix |
+| You want a plan *before* writing any code | You just want the code, not a plan |
+| You'd like to see more than one point of view | You already know exactly what to do |
 
-## What's inside
+## Privacy
 
-- **Runner + host split.** A deterministic runner drives the external Codex relay (`codex exec`, hard timeout, fail-open); the host (Claude Code) contributes its own leg and does the final synthesis.
-- **SQLite storage.** Each run — the brief, both leg reports, and the final plan — lives in one local SQLite DB (`~/.fusion/fusion.db`). Nothing is written into your project directory.
-- **Local dashboard.** An on-demand web UI to browse the full history of past runs.
-
-## Data & privacy
-
-- All run data lives locally in `~/.fusion/fusion.db`. Nothing is sent anywhere except to the `codex` and `claude` CLIs you already use.
-- The Codex leg runs in a **read-only sandbox** — it does not write into your project.
-
-## Repository layout
-
-```
-fusion/
-├── .claude-plugin/marketplace.json   # marketplace catalog
-├── plugin/                           # THE PLUGIN — only this ships to users
-│   ├── .claude-plugin/plugin.json
-│   └── skills/fusion/                # ${CLAUDE_SKILL_DIR} at runtime
-├── tests/                            # dev-only (bun test), not shipped
-├── scripts/                          # dev-only seed helper, not shipped
-├── build/                            # dashboard CSS build tooling, not shipped
-└── package.json
-```
-
-Only the `plugin/` directory is copied to a user's plugin cache on install; `tests/`, `scripts/`, and `build/` live at the repo root and never ship.
+Everything stays on your machine — your runs are saved locally, and nothing is sent anywhere except to the Claude and Codex tools you already use. While Codex works, it can only *read* your project — it can't change anything.
 
 ## Development
 
 ```
-bun install      # dev types only (@types/bun)
-bun test         # run the full suite from the repo root
+bun install    # dev setup
+bun test       # run the tests
 ```
 
-To rebuild the vendored dashboard stylesheet after changing Tailwind classes:
-
-```
-bash build/build-css.sh
-```
+Only the `plugin/` folder ships to users; `tests/`, `scripts/`, and `build/` are for development and never ship.
 
 ## Status
 
-Fusion is **early (v0.1.0)** — usable and tested, but still evolving. Expect rough edges, and file issues if you hit them.
-
-## Acknowledgements
-
-Built on [Claude Code](https://claude.com/claude-code), the [Codex CLI](https://github.com/openai/codex), and [Bun](https://bun.sh).
+Fusion is **early (v0.1.0)** — it works and it's tested, but it's still growing. If you hit a rough edge, please open an issue.
 
 ## License
 
