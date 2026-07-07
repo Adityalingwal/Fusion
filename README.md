@@ -1,13 +1,13 @@
 # 🔀 Fusion
 
-**Fusion puts two of the best AI models — Anthropic's Claude and OpenAI's GPT — to work on your hardest tasks together, so you get a stronger result.**
+**Two of the best AI models — Claude and GPT — think through your hardest tasks together, for a sharper, stronger result.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-fbf0df?logo=bun&logoColor=black)](https://bun.sh)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 
-Fusion is a plugin for [Claude Code](https://claude.com/claude-code). When you have a big or tricky task, it asks **two of the best AI models — Claude (from Anthropic) and GPT (from OpenAI) — to think about it separately**, then gives you **one clear plan** that combines their best ideas. It only *plans* the work — it never changes your code — and it runs on the AI tools you already pay for, so there's **no extra cost**.
+Fusion is a plugin for [Claude Code](https://claude.com/claude-code). When you have a big or tricky task, it asks **two of the best AI models — Claude and GPT — to think about it separately**, then gives you **one clear plan** that combines their best ideas. It runs on the AI tools you already pay for, so there's **no extra cost**.
 
 ```mermaid
 flowchart TD
@@ -31,7 +31,6 @@ flowchart TD
 
 - **Two minds, not one.** Two strong models look at your task, so you catch more and miss less.
 - **No extra cost.** It runs on the Claude Code and Codex tools you already pay for — nothing more.
-- **It plans, it doesn't touch your code.** Safe by default.
 - **Everything stays on your computer.** Nothing is sent anywhere else.
 
 ## Get started
@@ -50,8 +49,8 @@ flowchart TD
 ## What you need
 
 - **[Bun](https://bun.sh)** — the tool Fusion runs on.
-- **[Codex CLI](https://github.com/openai/codex)** (OpenAI), installed and logged in (`codex login`) — this is how Fusion reaches OpenAI's GPT. It uses whatever model you've already set in your own Codex settings, so you don't configure anything here.
-- **[Claude Code](https://claude.com/claude-code)** (Anthropic) — where you run Fusion; it provides the Claude side.
+- **[Codex CLI](https://github.com/openai/codex)**, installed and logged in (`codex login`) — this is how Fusion runs GPT. It uses whatever model you've already set in your own Codex settings, so you don't configure anything here.
+- **[Claude Code](https://claude.com/claude-code)** — where you run Fusion; it provides the Claude side.
 
 ## Usage
 
@@ -59,32 +58,19 @@ flowchart TD
 |---|---|
 | `/fusion:fusion plan <task>` | Run Fusion on a task and get one clear plan |
 | `/fusion:fusion` → dashboard | Open a local page to browse your past runs |
-| `bun "${CLAUDE_SKILL_DIR}/fusion.ts" doctor` | Check that everything is set up correctly |
 
 ## When to use it · When to skip it
 
 | Use Fusion when… | Skip it when… |
 |---|---|
 | The task is big, or you're not sure how to approach it | It's a tiny change — a typo or a one-line fix |
-| You want a plan *before* writing any code | You just want the code, not a plan |
 | You'd like to see more than one point of view | You already know exactly what to do |
 
 ## Privacy
 
-Everything stays on your machine — your runs are saved locally, and nothing is sent anywhere except to the Claude and Codex tools you already use. While Codex works, it can only *read* your project — it can't change anything.
+Everything stays on your machine — your runs are saved locally, and nothing is sent anywhere except to the Claude and Codex tools you already use.
 
-## Development
 
-```
-bun install    # dev setup
-bun test       # run the tests
-```
-
-Only the `plugin/` folder ships to users; `tests/`, `scripts/`, and `build/` are for development and never ship.
-
-## Status
-
-Fusion is **early (v0.1.0)** — it works and it's tested, but it's still growing. If you hit a rough edge, please open an issue.
 
 ## License
 
