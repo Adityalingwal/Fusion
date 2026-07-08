@@ -2,12 +2,12 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "fusion",
   "version": "0.1.0",
-  "description": "Multi-model planning council for Claude Code — Claude and Codex plan the same brief independently, then the host synthesizes one plan with disagreements kept visible.",
+  "description": "Two of the best AI models — Claude and GPT — plan your hardest tasks together, so you catch more and miss less.",
   "author": {
     "name": "Aditya Lingwal"
   },
   "homepage": "https://github.com/Adityalingwal/Fusion",
   "repository": "https://github.com/Adityalingwal/Fusion",
   "license": "MIT",
-  "keywords": ["planning", "multi-model", "codex", "council", "review"]
+  "keywords": ["planning", "multi-model", "claude-code", "codex", "gpt", "council"]
 }
