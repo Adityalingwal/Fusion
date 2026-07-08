@@ -63,7 +63,7 @@ function renderProjectChildren(project) {
     return runs.map(renderRunRow).join('');
   }
   const hint = project.isCurrent
-    ? ' — start one with <span class="font-mono not-italic">fusion plan</span>'
+    ? ' — start one with <span class="font-mono not-italic">/fusion</span>'
     : '';
   return `<p class="px-2.5 py-1.5 text-[11px] italic text-dm-muted">No runs yet${hint}</p>`;
 }
@@ -96,7 +96,7 @@ function renderProjectTree() {
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
         </svg>
         <p class="text-[13px] font-bold text-dm-text-soft">No projects yet</p>
-        <p class="text-[11px] leading-relaxed max-w-[30ch]">Run <span class="font-mono text-dm-text bg-dm-panel-beige px-1.5 py-0.5 rounded">fusion plan</span> in any repo to create your first one.</p>
+        <p class="text-[11px] leading-relaxed max-w-[30ch]">Run <span class="font-mono text-dm-text bg-dm-panel-beige px-1.5 py-0.5 rounded">/fusion</span> in any repo to create your first one.</p>
       </div>`;
     return;
   }

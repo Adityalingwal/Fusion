@@ -2,7 +2,7 @@
 name: fusion
 description: >-
   Multi-model planning council, user-invoked via the /fusion command
-  ("fusion plan <task>"). Claude and Codex plan the same
+  ("/fusion <task>"). Claude and Codex plan the same
   brief independently; the host then synthesizes ONE plan with
   disagreements kept visible. Do not auto-trigger from general planning
   talk — fire only on an explicit fusion request.
