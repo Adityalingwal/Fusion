@@ -27,6 +27,14 @@ export const CODEX_REQUIRED_FLAGS = ["-C", "-o", "--sandbox", "--json", "--ephem
 // Model + reasoning effort are NOT set here. We deliberately pass no `-m` (and no effort override), so
 // codex falls back to the user's own `~/.codex/config.toml` — the single place they already configure
 // which model / effort their subscription uses. Fusion respects that instead of pinning its own copy.
+//
+// `-c tools.web_search=true` gives the Codex leg the native `web_search` tool so it CAN look things up
+// on the live web when the brief warrants it (docs, versions, external facts the repo can't answer). Codex
+// decides per-run whether to actually search — it stays offline when the task is self-contained. This is a
+// config-value override, NOT a bare flag, so its key can't be verified via `codex exec --help`; that's why
+// it is intentionally absent from CODEX_REQUIRED_FLAGS (which tracks only help-verifiable structural flags).
+// Verified: `--search` is top-level-only (rejected by `codex exec`); `-c tools.web_search=true` is the
+// exec-compatible form, and it works under `--sandbox read-only` (web_search is model-native, not a shell op).
 export function buildCodexArgs(projectDir: string, outPath: string): string[] {
   return [
     "exec",
@@ -35,6 +43,8 @@ export function buildCodexArgs(projectDir: string, outPath: string): string[] {
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
+    "-c",
+    "tools.web_search=true",
     "-C",
     projectDir,
     "-o",
