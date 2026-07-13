@@ -39,6 +39,27 @@ flowchart TD
 2. `/plugin install fusion@fusion`
 3. `/fusion <your task>`
 
+## Staying up to date
+
+Fusion improves over time. New versions don't install themselves by default — here's how to get them.
+
+**Turn on auto-update (recommended, one-time):**
+
+1. Run `/plugins`
+2. Open the **Marketplaces** tab.
+3. Click **fusion**.
+4. Select **Enable auto-update**.
+
+Now Claude Code refreshes Fusion on startup. When a new version is out, it updates automatically and prompts you to run `/reload-plugins` to activate it.
+
+**Prefer to update manually?** From the same **Marketplaces → fusion** screen choose **Update marketplace**, or run:
+
+```
+/plugin update fusion@fusion
+```
+
+See what changed in each version in [CHANGELOG.md](CHANGELOG.md).
+
 ## Usage
 
 | Command | What it does |
