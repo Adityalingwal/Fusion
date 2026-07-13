@@ -175,7 +175,13 @@ synthesis can weigh the legs on evidence, not on whose leg it is.
 
 10. **Show the user → let them correct → finalize + save + finish.** **Lead with Council Health** —
     `2/2 Full` or `1/2 = single-model (Codex dropped — NOT a council)`, from the runner's
-    `codexAvailable`; a **1/2 result must NEVER be presented as a passed council**. Then show: the synthesized plan, a
+    `codexAvailable`; a **1/2 result must NEVER be presented as a passed council**. **When 1/2, tell the user
+    WHY in one clean line** — read the runner summary's `reason` and lead with its actionable fix (e.g.
+    *"Codex isn't installed — run `npm i -g @openai/codex`"*, or *"your Codex CLI is stale — run
+    `npm i -g @openai/codex@latest`"*, or *"Codex isn't logged in — run `codex login`"*). Surface the fix
+    plainly; never bury it, and don't dump raw technical noise (exit codes, `$PATH` strings) as the headline.
+    If the reason has no clear fix (an unexpected failure), show its message as-is so the user isn't left
+    guessing. *(This is for the run-time relay failure only — `fusion doctor` prints its own guidance.)* Then show: the synthesized plan, a
     short "where they agreed / split", any **⚠️ User-Challenge** prominently, and the **advisor's verdict** (so
     the user reviews *informed*). **The user reviews and may correct** — apply their edits to the temp file
     (user edits are not re-reviewed; the user is the authority). On approval, **re-save the final plan to the

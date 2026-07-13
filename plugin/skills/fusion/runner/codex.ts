@@ -19,6 +19,62 @@ function hasStructuredFormat(text: string): boolean {
   return (text.match(/^##\s+/gm) || []).length >= 2;
 }
 
+// In `--json` mode codex reports API / model failures as JSON *events on stdout* (stderr stays empty),
+// so a bare stderr read yields "no stderr" and hides the real cause. Pull the error text out of the
+// stdout event stream instead. Two shapes occur: a top-level `{"type":"error",...}` event and an
+// item-wrapped `{"item":{"type":"error",...}}` event.
+//
+// IMPORTANT: benign warnings ALSO arrive as `type:"error"` items on a *successful* run (e.g.
+// "Under-development features enabled…"). This is why we only ever call this on a NON-ZERO exit — on
+// success the report comes from the `-o` file, never from these events, so warnings never mislead us.
+export function extractCodexError(stdout: string): string | null {
+  const messages: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue; // non-JSON / partial line — skip
+    }
+    const event = parsed as { type?: unknown; item?: unknown; message?: unknown; status?: unknown };
+    const node =
+      event.type === "error"
+        ? event
+        : event.item && (event.item as { type?: unknown }).type === "error"
+          ? (event.item as { message?: unknown; status?: unknown })
+          : null;
+    if (node && typeof node.message === "string") {
+      const status = typeof node.status === "number" ? `[${node.status}] ` : "";
+      messages.push(`${status}${node.message}`);
+    }
+  }
+  // The fatal error is emitted LAST, right before codex aborts; any earlier `error` items are warnings.
+  return messages.length ? messages[messages.length - 1] : null;
+}
+
+// Map recognizable failures to an actionable one-liner, appended to the raw message. Most users never
+// run `fusion doctor` — they just run Fusion — so THIS run-time reason is the only place they see what
+// broke. Keep every branch a concrete copy-paste fix, not an ambiguous message. (No silent auto-install:
+// we surface the command, the user runs it.)
+export function actionableHint(message: string): string {
+  // Codex not installed / not on PATH (spawn ENOENT). Only the npm global CLI is usable — the
+  // ChatGPT-app binary isn't on PATH — so the fix is always the global install + login.
+  if (/executable not found|not found in \$?path|\benoent\b|no such file/i.test(message)) {
+    return `${message}\n  → Codex isn't installed (or not on PATH). Install it: npm i -g @openai/codex — then run: codex login`;
+  }
+  // Stale PATH `codex` that predates a newly-configured model → "requires a newer version of Codex".
+  if (/newer version of codex|requires a newer version|upgrade the cli/i.test(message)) {
+    return `${message}\n  → Your codex CLI looks stale. Fix: npm i -g @openai/codex@latest`;
+  }
+  // Present but unauthenticated (kept distinct from a 400 credits/quota error, which is self-explanatory).
+  if (/not logged in|not authenticated|unauthorized|\b401\b/i.test(message)) {
+    return `${message}\n  → Run: codex login`;
+  }
+  return message;
+}
+
 // Single source of truth for the `codex exec` flags the runner relies on. doctor asserts the installed
 // codex still exposes EXACTLY these, and the runner builds its argv from the same builder — so a flag
 // the doctor green-lights is precisely a flag the runner uses (no long-vs-short drift).
@@ -74,7 +130,16 @@ export async function runCodexLeg(
       { stdin: brief, timeoutMs, cwd: projectDir },
     );
     if (res.timedOut) throw new Error(`timed out after ${timeoutMs}ms`);
-    if (res.code !== 0) throw new Error(`codex exited ${res.code}: ${lastStderr(res.stderr)}`);
+    if (res.code !== 0) {
+      // Surface BOTH channels so nothing is hidden: the real cause is usually a stdout JSON error
+      // event (e.g. a 400 "requires a newer version"), while stderr carries spawn/panic output.
+      const stdoutErr = extractCodexError(res.stdout);
+      const stderrTail = res.stderr.trim() ? lastStderr(res.stderr) : null;
+      const detail = actionableHint([stdoutErr, stderrTail].filter(Boolean).join(" | ") || "no error output");
+      // code === null means codex never started (spawn failure / not on PATH) — "exited null" reads as
+      // a bug, so phrase it as a start failure. A real non-zero exit keeps the code for diagnostics.
+      throw new Error(res.code === null ? `codex could not start: ${detail}` : `codex exited ${res.code}: ${detail}`);
+    }
     // Distinguish a real read failure (propagate its cause) from a legitimately empty file —
     // swallowing the error to "" mislabeled every read failure as "empty final message".
     let text: string;

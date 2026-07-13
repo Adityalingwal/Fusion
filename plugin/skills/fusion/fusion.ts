@@ -11,7 +11,6 @@ type CliValue = string | boolean | undefined;
 type CliValues = Record<string, CliValue>;
 
 const stringOption = { type: "string" as const };
-const booleanOption = { type: "boolean" as const };
 const OPTIONS_BY_COMMAND = {
   start: {
     "run-id": stringOption,
@@ -29,7 +28,7 @@ const OPTIONS_BY_COMMAND = {
   finish: { "run-id": stringOption },
   export: { "run-id": stringOption, type: stringOption, out: stringOption },
   dashboard: { port: stringOption },
-  doctor: { smoke: booleanOption },
+  doctor: {},
 } as const;
 
 type Command = keyof typeof OPTIONS_BY_COMMAND;
@@ -190,10 +189,9 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       return;
     }
     case "doctor": {
-      const childArgs = args.smoke === true ? ["--smoke"] : [];
-      const result = await runInternal("doctor.ts", childArgs, { echoStdoutToStderr: true });
+      const result = await runInternal("doctor.ts", [], { echoStdoutToStderr: true });
       if (result.code !== 0) throw new CliError(`doctor failed with exit code ${result.code}`);
-      writeJson({ ok: true, command, smoke: args.smoke === true });
+      writeJson({ ok: true, command });
       return;
     }
   }

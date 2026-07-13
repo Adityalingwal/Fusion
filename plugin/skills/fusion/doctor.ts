@@ -8,7 +8,7 @@
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CODEX_REQUIRED_FLAGS, buildCodexArgs } from "./runner/codex";
+import { CODEX_REQUIRED_FLAGS, buildCodexArgs, extractCodexError, actionableHint } from "./runner/codex";
 import { runProc } from "./lib/subprocess";
 
 // Reuse the shared runProc (timeout + drain + spawn-catch) instead of a third hand-rolled
@@ -38,7 +38,6 @@ function codexLoggedIn(output: string): boolean {
   return /logged in (as|using)\b/i.test(output);
 }
 
-const smoke = Bun.argv.includes("--smoke");
 console.log("Fusion doctor — checking subscription CLIs\n");
 
 const ok: Record<string, boolean> = {};
@@ -73,33 +72,47 @@ const warnings: string[] = [];
   }
 }
 
-// Optional opt-in: a tiny REAL prompt to the relay. Auth/flag checks pass even when the provider
-// is out of credits/quota (observed: authed but `400 insufficient credits`). Smoke catches that
-// BEFORE a real run wastes time on a leg that would only fail open.
-if (smoke) {
-  console.log("\nSmoke test (fires a tiny real prompt — uses a little quota):");
-  if (ok.codex) {
-    // Reuse the runner's EXACT argv (buildCodexArgs) so the smoke exercises the real invocation path
-    // — not a hand-rolled approximation — and assert the model actually replied READY (exit 0 alone
-    // can mask an empty answer). Model/effort come from ~/.codex/config.toml, same as a real run.
-    const outPath = join(tmpdir(), `fusion-doctor-smoke-${process.pid}.txt`);
-    let pass = false;
-    let detail = "";
-    try {
-      const result = await runProc(["codex", ...buildCodexArgs(process.cwd(), outPath)], {
-        stdin: "Reply with the single word READY.",
-        timeoutMs: 90_000,
-        cwd: process.cwd(),
-      });
-      const out = await readFile(outPath, "utf8").catch(() => "");
-      pass = !result.timedOut && result.code === 0 && /READY/i.test(out);
-      detail = shortErr(out || result.stderr);
-    } finally {
-      await rm(outPath, { force: true }).catch(() => {});
+// Real-model ping — default, not opt-in. The version/login/flag checks above all pass even when the
+// PATH `codex` is too old for the user's configured model (stale binary → 400 "requires a newer
+// version") or the provider is out of credits (authed but `400 insufficient credits`). Both are
+// false-greens. Firing the ACTUAL configured model is the only reliable way to confirm a run will
+// work, so doctor does it every time rather than hiding it behind a flag.
+if (ok.codex) {
+  console.log("\nModel ping (fires a tiny real prompt to the configured model — uses a little quota):");
+  // Reuse the runner's EXACT argv (buildCodexArgs) so the ping exercises the real invocation path —
+  // not a hand-rolled approximation — and assert the model actually replied READY (exit 0 alone can
+  // mask an empty answer). Model/effort come from ~/.codex/config.toml, same as a real run.
+  const outPath = join(tmpdir(), `fusion-doctor-smoke-${process.pid}.txt`);
+  let pass = false;
+  let detail = "";
+  try {
+    const result = await runProc(["codex", ...buildCodexArgs(process.cwd(), outPath)], {
+      stdin: "Reply with the single word READY.",
+      timeoutMs: 90_000,
+      cwd: process.cwd(),
+    });
+    const out = await readFile(outPath, "utf8").catch(() => "");
+    pass = !result.timedOut && result.code === 0 && /READY/i.test(out);
+    if (!pass) {
+      // Explain WHY, honestly. A codex failure reports its real cause as a JSON error event on
+      // stdout (stderr stays empty) — the same trap the runner hit — so read it the same way and
+      // attach the actionable fix. Only parse stdout errors on a non-zero exit (mirrors the runner):
+      // on a 0-exit the "errors" are benign warnings, so show the actual reply instead.
+      if (result.timedOut) {
+        detail = "timed out";
+      } else if (result.code !== 0) {
+        const stdoutErr = extractCodexError(result.stdout);
+        const stderrTail = result.stderr.trim() ? shortErr(result.stderr) : null;
+        detail = actionableHint([stdoutErr, stderrTail].filter(Boolean).join(" | ") || "no error output");
+      } else {
+        detail = shortErr(out || "empty reply");
+      }
     }
-    line("Codex smoke", pass ? "✓ responded READY" : `✗ failed → ${detail}`);
-    if (!pass) ok.codex = false;
+  } finally {
+    await rm(outPath, { force: true }).catch(() => {});
   }
+  line("Codex model", pass ? "✓ configured model responded" : `✗ failed → ${detail}`);
+  if (!pass) ok.codex = false;
 }
 
 const relaysOk = Boolean(ok.codex);
