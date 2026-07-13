@@ -45,20 +45,20 @@ Fusion improves over time. New versions don't install themselves by default — 
 
 **Turn on auto-update (recommended, one-time):**
 
-1. Run `/plugins`
+1. Run `/plugin` to open the plugin manager.
 2. Open the **Marketplaces** tab.
 3. Click **fusion**.
 4. Select **Enable auto-update**.
 
-Now Claude Code refreshes Fusion on startup. When a new version is out, it updates automatically and prompts you to run `/reload-plugins` to activate it.
+From now on, each time you **start** Claude Code it fetches the latest Fusion automatically. Restart Claude Code once after a new version lands to load it.
 
-**Prefer to update manually?** From the same **Marketplaces → fusion** screen choose **Update marketplace**, or run:
+**Prefer to update manually?**
 
-```
-/plugin update fusion@fusion
-```
+1. Run `/plugin` → **Marketplaces** tab → click **fusion**.
+2. Click **Update marketplace** (pulls the latest code).
+3. **Restart Claude Code** to load it — quit and reopen the Claude Code session. (A plugin reload alone does not always apply the new version.)
 
-See what changed in each version in [CHANGELOG.md](CHANGELOG.md).
+**How to confirm you're on the latest:** `/plugin` → **Installed** tab shows Fusion's version number — check it against the newest in [CHANGELOG.md](CHANGELOG.md).
 
 ## Usage
 

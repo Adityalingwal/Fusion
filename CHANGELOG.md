@@ -4,6 +4,15 @@ All notable changes to Fusion are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Fusion uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-07-13
+
+### Changed
+
+- **Clearer update instructions in the README.** The "Staying up to date"
+  section now gives numbered steps, points to a Claude Code restart (rather
+  than a plugin reload) to apply a new version, and explains how to confirm
+  the installed version.
+
 ## [0.1.1] — 2026-07-13
 
 ### Added
