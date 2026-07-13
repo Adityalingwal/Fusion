@@ -9,9 +9,8 @@ All notable changes to Fusion are documented here. The format follows
 ### Changed
 
 - **Clearer update instructions in the README.** The "Staying up to date"
-  section now gives numbered steps, points to a Claude Code restart (rather
-  than a plugin reload) to apply a new version, and explains how to confirm
-  the installed version.
+  section is now a single, verified path — **`/plugins` → Installed → fusion →
+  Update now** — which applies immediately with no restart.
 
 ## [0.1.1] — 2026-07-13
 

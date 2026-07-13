@@ -41,24 +41,13 @@ flowchart TD
 
 ## Staying up to date
 
-Fusion improves over time. New versions don't install themselves by default — here's how to get them.
+Fusion improves over time. To get the latest version:
 
-**Turn on auto-update (recommended, one-time):**
+1. Run `/plugins` to open the plugin manager.
+2. Open the **Installed** tab and select **fusion**.
+3. Click **Update now**.
 
-1. Run `/plugin` to open the plugin manager.
-2. Open the **Marketplaces** tab.
-3. Click **fusion**.
-4. Select **Enable auto-update**.
-
-From now on, each time you **start** Claude Code it fetches the latest Fusion automatically. Restart Claude Code once after a new version lands to load it.
-
-**Prefer to update manually?**
-
-1. Run `/plugin` → **Marketplaces** tab → click **fusion**.
-2. Click **Update marketplace** (pulls the latest code).
-3. **Restart Claude Code** to load it — quit and reopen the Claude Code session. (A plugin reload alone does not always apply the new version.)
-
-**How to confirm you're on the latest:** `/plugin` → **Installed** tab shows Fusion's version number — check it against the newest in [CHANGELOG.md](CHANGELOG.md).
+That's it — the update applies right away, no restart needed. You can check Fusion's version number on that same screen against the newest release in [CHANGELOG.md](CHANGELOG.md).
 
 ## Usage
 
