@@ -47,7 +47,7 @@ Fusion improves over time. To get the latest version:
 2. Open the **Installed** tab and select **fusion**.
 3. Click **Update now**.
 
-That's it — the update applies right away, no restart needed. You can check Fusion's version number on that same screen against the newest release in [CHANGELOG.md](CHANGELOG.md).
+That's it — the update applies right away, no restart needed. See [CHANGELOG.md](CHANGELOG.md) for what's new in the latest version.
 
 ## Usage
 
