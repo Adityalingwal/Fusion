@@ -144,7 +144,7 @@ export async function launchDashboard(options: {
   log(`  🔗 URL: ${url}`);
   log("  ========================================================");
   log("");
-  log('  To stop it: tell Claude "close the dashboard" (or press Ctrl+C here).');
+  log('  To stop it: tell Claude "close the dashboard".');
   log("");
 
   // Best-effort only: the printed URL is the permanent fallback on headless/minimal systems.
