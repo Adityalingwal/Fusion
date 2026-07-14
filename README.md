@@ -43,6 +43,8 @@ Fusion only helps if **both** models actually run — one model on its own is ju
 
 ## Get started
 
+Open Claude Code **in your terminal**, then run these commands one by one:
+
 1. `/plugin marketplace add Adityalingwal/Fusion`
 2. `/plugin install fusion@fusion`
 3. `/fusion <your task>`
@@ -51,9 +53,14 @@ Fusion only helps if **both** models actually run — one model on its own is ju
 
 Fusion improves over time. To get the latest version:
 
-1. Run `/plugins` to open the plugin manager.
-2. Open the **Installed** tab and select **fusion**.
-3. Click **Update now**.
+**In the terminal:**
+
+1. Run `/plugins`, open the **Installed** tab, select **fusion**, and click **Update now**.
+
+**In the desktop app:**
+
+1. Open **Settings → Plugins**.
+2. Click **Fusion**, then click the **Update** button.
 
 That's it — the update applies right away, no restart needed. See [CHANGELOG.md](CHANGELOG.md) for what's new in the latest version.
 
@@ -62,7 +69,11 @@ That's it — the update applies right away, no restart needed. See [CHANGELOG.m
 | Command | What it does |
 |---|---|
 | `/fusion <your task>` | Run Fusion on a task and get one clear plan |
+| `/fusion resume` | Pick up an interrupted run where it stopped |
 | `/fusion dashboard` | Open a local page to browse your past runs |
+| `/fusion dashboard-close` | Close the dashboard when you're done |
+
+While a Fusion run is in progress, open the dashboard from a new Claude Code session — just say `/fusion dashboard` there.
 
 ## When to use it · When to skip it
 

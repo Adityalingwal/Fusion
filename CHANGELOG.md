@@ -4,6 +4,24 @@ Notable changes to Fusion will be documented here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-14
+
+A tidier dashboard experience, and clearer setup guidance.
+
+### Changed
+- **Opening the dashboard always gives you a fresh one.** If a dashboard is
+  already running — even from another session, or from before a plugin
+  update — `/fusion dashboard` now closes it and starts a fresh one on the
+  same port, so you never end up with piled-up or out-of-date dashboards.
+  Anything else running on those ports is left untouched.
+- **Closing is now a first-class command.** Say `/fusion dashboard-close`
+  (or just "close the dashboard") and Fusion finds the running dashboard and
+  shuts it down — no matter which session started it. The old "press Ctrl+C"
+  instruction is gone; it never matched how the dashboard actually runs.
+- **Clearer install + update guidance.** The README now says where the
+  install commands go (Claude Code in your terminal) and adds the desktop-app
+  update path (Settings → Plugins → Fusion → Update) next to the terminal one.
+
 ## [0.3.0] — 2026-07-14
 
 Sharper failure messages and a cleaner review-and-finish flow, building on

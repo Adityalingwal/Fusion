@@ -295,18 +295,28 @@ session itself died mid-run. Which artifacts exist in the DB tells you where it 
 ## DASHBOARD mode — steps (on-demand)
 
 Use when the user wants to visually browse the history of PLAN runs, view reports side-by-side, or inspect
-briefs / legs / plans. Trigger: `fusion dashboard`, `show dashboard`, `open web ui`.
+briefs / legs / plans. Open trigger: `/fusion dashboard`, `show dashboard`, `open web ui`.
+Close trigger: `/fusion dashboard-close`, `close the dashboard`.
 
-1. **Launch Dashboard Server.** Run in the BACKGROUND (the server never exits on its own — it holds
-   the process open until `Ctrl+C`; a foreground call would block until the tool timeout kills it,
-   taking the user's dashboard down with it):
+1. **Open.** Run in the BACKGROUND (the server never exits on its own — a foreground call would
+   block until the tool timeout kills it, taking the user's dashboard down with it):
    ```bash
    bun "${CLAUDE_SKILL_DIR}/fusion.ts" dashboard
    ```
-   It starts a lightweight on-demand HTTP server and opens the browser at the local dashboard URL
-   (e.g. `http://localhost:38888`). The dashboard reads everything from the Fusion SQLite DB. Its
-   stdout is a single JSON line with the `url` — read it and report the URL to the user.
+   It starts a lightweight local HTTP server and opens the browser at the dashboard URL
+   (e.g. `http://localhost:38888`), reading everything from the Fusion SQLite DB. Safe to re-run:
+   if a dashboard is already up — even one started by another session, or running older code from
+   before a plugin update — the command stops it first and starts fresh on the same port, so there
+   is never a second stale copy. Its stdout is a single JSON line with the `url` — report the URL
+   to the user and, in the same line, how to leave: say `close the dashboard` when you're done.
 2. **Browse, compare**: select runs and inspect briefs / legs / plan side-by-side.
-3. **Exit**: `Ctrl+C` in the terminal stops the server and frees the port.
+3. **Close (when the user asks).** Run synchronously (NOT in the background):
+   ```bash
+   bun "${CLAUDE_SKILL_DIR}/fusion.ts" dashboard --stop
+   ```
+   It finds the running dashboard (whichever session started it), verifies it really is Fusion's —
+   it never touches any other app — shuts it down, and prints `stopped` in its JSON. Confirm to the
+   user in one line. `stopped: false` with no `port` just means nothing was running — report that
+   plainly; it is a clean answer, not an error.
 
 ---
