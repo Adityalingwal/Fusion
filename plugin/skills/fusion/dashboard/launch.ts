@@ -121,7 +121,14 @@ export async function launchDashboard(options: {
   // running OLDER code from before a plugin update — is stopped first, so this launch always
   // serves fresh code and reclaims the same port (the user's existing tab keeps its URL). A
   // foreign app on the port is left alone (identity-gated) and startServer steps past it instead.
-  await stopRunningDashboard(basePort);
+  const stop = await stopRunningDashboard(basePort);
+  // A Fusion dashboard was found but would not die (stopped:false WITH a port). Starting anyway would
+  // leave TWO dashboards up — the old one (stale code) plus a new one on the next port — silently. Bail
+  // instead, with the same wording the --stop path uses. Nothing running (stopped:false, no port) is
+  // fine and proceeds.
+  if (stop.stopped === false && stop.port !== undefined) {
+    throw new Error(`found a dashboard on port ${stop.port} but could not stop it`);
+  }
   const server = await startServer(basePort);
   const exit = options.exit ?? ((code: number) => process.exit(code));
   setShutdownHandler(() => {

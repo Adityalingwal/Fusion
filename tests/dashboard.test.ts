@@ -415,6 +415,35 @@ test("dashboard lifecycle: relaunch replaces the old server on the SAME port; --
   setShutdownHandler(null);
 });
 
+test("launch refuses to start a second dashboard when the running one will not stop", async () => {
+  const port = 39901; // outside the 38888+ default range — never touches a real dashboard
+  // A Fusion dashboard by identity, but /api/shutdown fails — so stopRunningDashboard reports
+  // {stopped:false, port}. launchDashboard must reject rather than binding the next port.
+  const stubborn = Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    fetch: (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/api/fusion-dashboard") return Response.json({ fusionDashboard: true });
+      if (url.pathname === "/api/shutdown") return new Response("no", { status: 500 });
+      return new Response("stubborn");
+    },
+  });
+  try {
+    let exits = 0;
+    await expect(
+      launchDashboard({ port, open: false, log: () => {}, exit: () => { exits++; } }),
+    ).rejects.toThrow("could not stop it");
+    // No second server was started: the stubborn one still owns `port`, and nothing bound the next.
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("stubborn");
+    expect(await findRunningDashboard(port + 1)).toBeNull();
+    expect(exits).toBe(0);
+  } finally {
+    stubborn.stop(true);
+    setShutdownHandler(null);
+  }
+});
+
 test("a foreign app on the port is never touched: probe says no, stop skips it, launch steps past it", async () => {
   const port = 39899;
   const foreign = Bun.serve({
