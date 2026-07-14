@@ -136,7 +136,7 @@ async function execute(command: Command, args: CliValues): Promise<void> {
   switch (command) {
     case "start": {
       const projectDir = resolve(optionalString(args, "project-dir") ?? process.cwd());
-      // Fail-fast gate: verify Codex end-to-end (install → login → exec flags → real model ping)
+      // Fail-fast gate: verify Codex end-to-end (install → login → real model ping)
       // BEFORE creating any run row. A broken Codex would otherwise degrade Fusion to a pointless
       // single-model plan only AFTER most host tokens are spent — so refuse here, create nothing, and
       // hand back the reason + copy-paste fix. No skip flag, no env escape hatch.
