@@ -42,6 +42,11 @@ line poisons BOTH legs); **evidence > assertion** — every claim rests on `file
 consequence, never "it's simpler/cleaner", so the synthesis can weigh the legs on evidence, not on
 whose leg it is.
 
+## Menus: a typed reply wins
+Every user menu in this skill (the mid-run drop menu, the finalize menu, the resume picker) follows one
+rule: **a typed free-text reply outranks the listed buttons — do what they said.** If it's ambiguous, ask
+ONE short clarifying question. Never silently map a typed answer onto the nearest button.
+
 ---
 
 ## PLAN mode — steps
@@ -150,10 +155,8 @@ whose leg it is.
    - A Retry / Fix+Retry that drops AGAIN → re-present this menu with the fresh `reason`/`category`. The
      user decides each round — never auto-loop. **Single-model** routes to the Claude-only branch below
      (an explicit user choice, never a silent default).
-   - **A typed free-text reply outranks the listed buttons — do what they said.** If it names a fix or a
-     variation (e.g. "retry with a longer timeout"), apply it (e.g.
-     `relay --run-id <run-id> --timeout-ms <n>`); if it's ambiguous, ask ONE short clarifying question.
-     Never silently map a typed answer onto the nearest button.
+   - **Free-text (the menu rule above applies):** if it names a fix or a variation (e.g. "retry with a
+     longer timeout"), apply it (e.g. `relay --run-id <run-id> --timeout-ms <n>`).
 
    **If `codexAvailable: true`, run the critique — MAP the two legs; do NOT pick a winner yet.** Once
    your own leg is saved, read the Codex report:
@@ -238,8 +241,8 @@ whose leg it is.
     `fusion.ts export` (on demand).
   - **Discard** → `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <run-id>` + a one-line confirmation
     (this is what stops a rejected plan from lingering as `running` and haunting the resume picker).
-  - **Free-text = the corrections channel** (there is no separate "Correct" button — the box IS it). A typed
-    reply outranks the buttons: apply the user's edits to the temp file (NOT re-reviewed — the user is the
+  - **Free-text = the corrections channel** (there is no separate "Correct" button — the box IS it; the
+    menu rule above applies): apply the user's edits to the temp file (NOT re-reviewed — the user is the
     authority), show the updated plan, and re-ask this same menu. As many rounds as the user needs.
 
 ### Single-model (Claude-only) branch — an explicit user choice, never a default
@@ -269,9 +272,9 @@ session itself died mid-run. Which artifacts exist in the DB tells you where it 
    projects, newest first, each with title, when, `projectDir`, its `artifacts` map, and any GPT drop
    `reason`/`category`. **Filter to the CURRENT project** (match `projectDir`) and show **ONLY the newest 3** as
    options — each one line: title · when · why it stopped. **Nothing else:** no other-project counts, no
-   "N older runs exist" line, no extra lists. The question UI's built-in free-text box stays — a typed reply
-   outranks the listed options (e.g. the user pastes a specific runId or says "the auth one"); if it's
-   ambiguous, ask ONE short clarifying question. (If they already named a runId, skip to 2.)
+   "N older runs exist" line, no extra lists. The question UI's built-in free-text box stays (the menu rule
+   applies) — e.g. the user pastes a specific runId or says "the auth one". (If they already named a runId,
+   skip to 2.)
 2. **Inspect the pick, then continue from the right point.**
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" status --run-id <id>` — read its `artifacts` map + any drop reason, then:
    - **no brief** → nothing worth resuming; suggest a fresh `/fusion` run instead.
