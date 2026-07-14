@@ -75,9 +75,19 @@ async function readBrief(
   return await Bun.stdin.text();
 }
 
+// Hoisted so the fatal-path handlers below can attach it to the receipt. Null until parsed — a crash
+// before parsing still emits a receipt, just with runId: null.
+let runId: string | null = null;
+
+// The runner's hard spec constraint: it must ALWAYS end with a machine-readable JSON summary line on
+// stdout, even on a fatal path, so the host gets a reason + category instead of a bare exit code.
+function printReceipt(reason: string): void {
+  console.log(JSON.stringify({ runId, codexAvailable: false, reason, category: "unknown" }));
+}
+
 async function main(): Promise<void> {
   const args = parseStringArgs(process.argv.slice(2), RUNNER_ARG_NAMES, "fusion-runner");
-  const runId = args["run-id"] || crypto.randomUUID();
+  runId = args["run-id"] || crypto.randomUUID();
   const invocationDir = process.cwd();
   const projectDir = args["project-dir"] ? resolvePath(invocationDir, args["project-dir"]) : invocationDir;
   const timeoutMs = parseTimeoutMs(args["timeout-ms"] || process.env.FUSION_TIMEOUT_MS);
@@ -88,7 +98,9 @@ async function main(): Promise<void> {
 
   const brief = await readBrief(db, runId, args, projectDir);
   if (!brief.trim()) {
-    console.error("fusion-runner: empty brief (use --brief-file <path> or pipe on stdin)");
+    const reason = "empty brief (use --brief-file <path> or pipe on stdin)";
+    console.error(`fusion-runner: ${reason}`);
+    printReceipt(reason);
     process.exit(2);
   }
   // Idempotent: the host normally creates the run + brief first, but make the runner self-contained.
@@ -113,6 +125,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  const reason = err instanceof Error ? err.message : String(err);
   console.error("fusion-runner: fatal —", err);
+  printReceipt(reason);
   process.exit(1);
 });

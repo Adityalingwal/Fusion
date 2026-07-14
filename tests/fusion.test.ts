@@ -121,6 +121,31 @@ test("plugin-internal relay delegates to the runner and returns a minimal summar
   expect(logs.some((entry) => entry.tool === "codex" && entry.args[0] === "exec")).toBe(true);
 });
 
+test("relay surfaces the runner's failure receipt to the host instead of a bare exit code", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "relay-fail.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  // A run with NO stored brief and nothing piped → the runner hits its empty-brief fatal path and
+  // prints a receipt. relay must parse that receipt and re-emit it as ok:false with a non-zero exit.
+  expect((await runBun(
+    fusionPath,
+    ["start", "--run-id", "relay-fail", "--project-dir", project, "--title", "Relay fail"],
+    common,
+  )).code).toBe(0);
+
+  const relay = await runBun(fusionPath, ["relay", "--run-id", "relay-fail", "--timeout-ms", "5000"], common);
+  expect(relay.code).not.toBe(0);
+  const summary = json(relay.stdout);
+  expect(summary.ok).toBe(false);
+  expect(summary.command).toBe("relay");
+  expect(summary.codexAvailable).toBe(false);
+  expect(summary.category).toBe("unknown");
+});
+
 test("start gate: a passing preflight creates the run and marks preflight ok", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);

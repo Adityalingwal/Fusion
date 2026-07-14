@@ -139,6 +139,48 @@ test("runner drop: a quota-style error event is classified and recorded as quota
   expect(detail.codexFailCategory).toBe("quota");
 });
 
+test("runner prints a JSON receipt before exiting on an empty brief (fatal path)", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+
+  // No stored brief, no --brief-file, stdin is /dev/null → empty brief → the runner must still emit a
+  // receipt before its non-zero exit (the whole B1 fix).
+  const result = await runBun(
+    runnerPath,
+    ["--run-id", "empty-run", "--project-dir", project],
+    { cwd: root, bin, log, env: { FUSION_DB: join(root, "empty.db") } },
+  );
+  expect(result.code).not.toBe(0);
+  const summary = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(summary.runId).toBe("empty-run");
+  expect(summary.codexAvailable).toBe(false);
+  expect(summary.category).toBe("unknown");
+});
+
+test("runner prints a JSON receipt even on a fatal crash (unusable DB path)", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  await writeFile(join(project, "brief.md"), "Plan something", "utf8");
+  // FUSION_DB points at a directory → opening it as a SQLite file throws before the codex leg runs.
+  const dbDir = join(root, "db-is-a-directory");
+  await mkdir(dbDir, { recursive: true });
+
+  const result = await runBun(
+    runnerPath,
+    ["--run-id", "crash-run", "--brief-file", "brief.md", "--project-dir", project, "--timeout-ms", "5000"],
+    { cwd: root, bin, log, env: { FUSION_DB: dbDir } },
+  );
+  expect(result.code).not.toBe(0);
+  const summary = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(summary.runId).toBe("crash-run");
+  expect(summary.codexAvailable).toBe(false);
+  expect(summary.category).toBe("unknown");
+});
+
 test("runner success after a prior failure clears the recorded drop reason", async () => {
   const root = await tempDir();
   const { bin, log } = await makeFakeBin(root);

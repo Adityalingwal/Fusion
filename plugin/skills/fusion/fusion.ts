@@ -189,7 +189,24 @@ async function execute(command: Command, args: CliValues): Promise<void> {
         if (value) childArgs.push(`--${name}`, value);
       }
       const result = await runInternal("runner.ts", childArgs);
-      if (result.code !== 0) throw new CliError(`relay failed with exit code ${result.code}`);
+      if (result.code !== 0) {
+        // The runner always ends with a JSON receipt, even on a fatal path. If one is parseable, relay
+        // it to the host as a failure summary (reason + category) instead of a bare exit-code message —
+        // mirror the preflight-failure pattern: write JSON, set a non-zero exit, return. Only a truly
+        // silent child (no parseable JSON) falls through to the generic throw.
+        let summary: Record<string, unknown> | null = null;
+        try {
+          summary = lastJsonObject(result.stdout);
+        } catch {
+          summary = null;
+        }
+        if (summary) {
+          writeJson({ ok: false, command, ...summary });
+          process.exitCode = 1;
+          return;
+        }
+        throw new CliError(`relay failed with exit code ${result.code}`);
+      }
       writeJson({ ok: true, command, ...lastJsonObject(result.stdout) });
       return;
     }
