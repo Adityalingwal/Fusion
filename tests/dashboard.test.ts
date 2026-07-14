@@ -127,6 +127,22 @@ test("getProjects lists every project, flags + sorts the launched one on top, an
   expect(betaRuns.map((r) => r.title).sort()).toEqual(["Beta first plan", "Beta second plan"]);
 });
 
+test("opening the dashboard is view-only — it never registers the launch directory as a project", async () => {
+  const root = await tempDir();
+  const freshProject = join(root, "never-ran-fusion-here");
+  await mkdir(freshProject, { recursive: true });
+  process.env.FUSION_DB = join(root, "view-only.db");
+
+  setProjectDir(freshProject); // open the dashboard from a directory Fusion never ran in
+
+  // Both data entrypoints that resolve the "current" project must stay read-only.
+  expect(await getRuns()).toEqual([]);
+  expect(await getProjects()).toEqual([]);
+
+  // The DB itself gained no project row — only start/relay may create one.
+  expect(storage.getProjects(storage.open())).toEqual([]);
+});
+
 test("dashboard renders escaped titles while keeping run ids as internal routing keys", async () => {
   const fusionRoot = join(import.meta.dir, "../plugin/skills/fusion");
   const utilsSource = await readFile(join(fusionRoot, "dashboard/js/utils.js"), "utf8");

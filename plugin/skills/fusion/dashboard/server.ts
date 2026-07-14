@@ -59,10 +59,13 @@ function db() {
   return storage.open();
 }
 
+// Resolve-only, never insert: the dashboard is a viewer, so merely opening it must not register
+// the launch directory as a project in the DB (a project row is created by start/relay — i.e. by
+// actually running Fusion there). The id is only used to flag/sort the current project in the
+// sidebar and to scope the default runs query, neither of which needs a stored row.
 async function currentProject(): Promise<storage.Project> {
   if (!activeProject) {
     activeProject = await storage.resolveProject(projectDir);
-    storage.ensureProject(db(), activeProject);
   }
   return activeProject;
 }
