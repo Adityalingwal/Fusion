@@ -26,7 +26,8 @@ written into the project directory. Talk to it only through the bundled CLI
 - `abort --run-id <id>` — mark an interrupted run aborted (when the user gives up on it).
 - `dashboard` — run-history UI.
 
-> Every command prints JSON on stdout (progress/errors on stderr). A shell variable does
+> On success every command prints one JSON line on stdout (progress on stderr); on failure the
+> error goes to stderr and the command exits non-zero. A shell variable does
 > not survive into the next call — copy the exact `runId` string from `start` into each
 > later command. To save content, Write it to a temp file first, then `put … --file <temp>` —
 > pasting multi-KB markdown inline breaks shell escaping.
