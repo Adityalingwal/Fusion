@@ -71,20 +71,15 @@ test("schema has only projects and titled runs with embedded content + codex-fai
   ]);
 });
 
-test("a DB stamped with any pre-reset schema version refuses to open with delete-and-restart guidance", async () => {
-  // Pre-release stance: no migrations. Whatever version an old file carries (the pre-reset 3, or
-  // anything else), open() must refuse with a message that names the file and the fix.
-  for (const staleVersion of [2, 3, 4]) {
-    const dir = await makeTempDir();
-    const dbFile = join(dir, `stale-v${staleVersion}.db`);
-    const oldDb = new Database(dbFile, { create: true });
-    oldDb.exec(`PRAGMA user_version = ${staleVersion};`);
-    oldDb.close();
-    process.env.FUSION_DB = dbFile;
+test("a DB stamped with an unknown schema version refuses to open instead of running against it", async () => {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "stale.db");
+  const oldDb = new Database(dbFile, { create: true });
+  oldDb.exec("PRAGMA user_version = 3;");
+  oldDb.close();
+  process.env.FUSION_DB = dbFile;
 
-    expect(() => storage.open()).toThrow(`predates a pre-release schema reset (found v${staleVersion})`);
-    expect(() => storage.open()).toThrow(dbFile);
-  }
+  expect(() => storage.open()).toThrow("unsupported Fusion DB schema version 3");
 });
 
 test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a run row", async () => {

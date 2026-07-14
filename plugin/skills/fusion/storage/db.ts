@@ -51,20 +51,14 @@ function openConfigured(path: string): Database {
   }
 }
 
-// Current on-disk schema. Fusion is pre-release with no installed users, so there is deliberately
-// NO migration machinery: the CREATE below builds the final shape directly, and this number resets
-// to 1 as the one-and-only pre-release schema. A DB stamped with any other version predates this
-// reset — the fix is a fresh start (delete the file), not an upgrade path. Migrations begin when
-// real users exist.
+// Current on-disk schema, built directly by the CREATE below — Fusion is pre-release, so there is
+// no migration machinery yet; that starts when real users exist and this number moves past 1.
 const SCHEMA_VERSION = 1;
 
 function initSchema(db: Database): void {
   const version = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
   if (version !== 0 && version !== SCHEMA_VERSION) {
-    throw new Error(
-      `this Fusion database predates a pre-release schema reset (found v${version}); ` +
-        `delete ${dbPath()} and run Fusion again for a fresh start`,
-    );
+    throw new Error(`unsupported Fusion DB schema version ${version}`);
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
