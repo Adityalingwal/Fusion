@@ -24,6 +24,8 @@ async function record(extra = {}) {
   return stdin;
 }
 if (args.includes("--version")) {
+  // Simulate a missing / broken CLI: \`codex --version\` fails, which preflight reads as "not installed".
+  if (process.env.FAKE_CODEX_VERSION_FAIL) process.exit(1);
   console.log("codex-cli test");
   process.exit(0);
 }
@@ -31,20 +33,21 @@ if (args[0] === "login" && args[1] === "status") {
   console.log(process.env.FAKE_CODEX_STATUS || "Logged in using ChatGPT");
   process.exit(0);
 }
-if (args[0] === "exec" && args.includes("--help")) {
-  if (process.env.FAKE_CODEX_HELP === "missing-flags") {
-    console.log("codex exec --model");
-  } else {
-    // Mirror real codex help: each flag listed with both short + long form.
-    console.log("-m, --model -C, --cd -s, --sandbox -o, --output-last-message --json --ephemeral --skip-git-repo-check");
-  }
-  process.exit(0);
-}
 if (args[0] === "exec") {
   const stdin = await record();
+  // Simulate a real codex failure: it reports the cause as a JSON error event on STDOUT (stderr stays
+  // empty) — the same shape extractCodexError parses — then exits non-zero. Lets tests drive the
+  // runner's classification (e.g. a quota/429 message) end-to-end.
+  if (process.env.FAKE_CODEX_ERROR) {
+    const status = process.env.FAKE_CODEX_ERROR_STATUS;
+    const event = { type: "error", message: process.env.FAKE_CODEX_ERROR };
+    if (status) event.status = Number(status);
+    console.log(JSON.stringify(event));
+    process.exit(Number(process.env.FAKE_CODEX_EXIT || "1"));
+  }
   const outputFlag = args.includes("-o") ? "-o" : "--output-last-message";
   const outIndex = args.indexOf(outputFlag);
-  // Echo READY when the prompt asks for it (doctor --smoke), else the configured/default output.
+  // Echo READY when the prompt asks for it (the preflight model ping), else the configured/default output.
   const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CODEX_OUTPUT || "codex ok");
   if (outIndex >= 0) await writeFile(args[outIndex + 1], output, "utf8");
   process.exit(Number(process.env.FAKE_CODEX_EXIT || "0"));

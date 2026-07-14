@@ -51,10 +51,14 @@ function openConfigured(path: string): Database {
   }
 }
 
+// Current on-disk schema, built directly by the CREATE below — Fusion is pre-release, so there is
+// no migration machinery yet; that starts when real users exist and this number moves past 1.
+const SCHEMA_VERSION = 1;
+
 function initSchema(db: Database): void {
   const version = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
-  if (version !== 0 && version !== 3) {
-    throw new Error(`unsupported Fusion DB schema version ${version}; back up and reset the local database`);
+  if (version !== 0 && version !== SCHEMA_VERSION) {
+    throw new Error(`unsupported Fusion DB schema version ${version}`);
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
@@ -64,19 +68,21 @@ function initSchema(db: Database): void {
       created_at TEXT
     );
     CREATE TABLE IF NOT EXISTS runs (
-      id            TEXT PRIMARY KEY,
-      project_id    TEXT NOT NULL REFERENCES projects(id),
-      title         TEXT NOT NULL DEFAULT 'Untitled run',
-      status        TEXT NOT NULL CHECK (status IN ('running', 'completed')),
-      created_at    TEXT NOT NULL,
-      brief         TEXT,
-      claude_report TEXT,
-      codex_report  TEXT,
-      plan          TEXT
+      id                  TEXT PRIMARY KEY,
+      project_id          TEXT NOT NULL REFERENCES projects(id),
+      title               TEXT NOT NULL DEFAULT 'Untitled run',
+      status              TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
+      created_at          TEXT NOT NULL,
+      brief               TEXT,
+      claude_report       TEXT,
+      codex_report        TEXT,
+      plan                TEXT,
+      codex_fail_reason   TEXT,
+      codex_fail_category TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at DESC);
   `);
-  db.exec("PRAGMA user_version = 3;");
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }
 
 export function now(): string {

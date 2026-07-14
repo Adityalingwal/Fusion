@@ -33,7 +33,7 @@ test("run content roundtrips via getRunDetails", async () => {
   expect(d.createdAt).toBeTruthy();
 });
 
-test("schema v3 has only projects and titled runs with embedded content columns", async () => {
+test("schema has only projects and titled runs with embedded content + codex-failure columns", async () => {
   const { db } = await freshDb();
   const tables = db
     .query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -51,8 +51,10 @@ test("schema v3 has only projects and titled runs with embedded content columns"
     "claude_report",
     "codex_report",
     "plan",
+    "codex_fail_reason",
+    "codex_fail_category",
   ]);
-  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(3);
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(1);
   const titleColumn = (db.query(`PRAGMA table_info(runs)`).all() as Array<{
     name: string;
     notnull: number;
@@ -61,12 +63,39 @@ test("schema v3 has only projects and titled runs with embedded content columns"
   expect(titleColumn).toMatchObject({ notnull: 1, dflt_value: "'Untitled run'" });
   expect((db.query(`PRAGMA foreign_key_list(runs)`).get() as { table: string }).table).toBe("projects");
   expect((db.query(`SELECT sql FROM sqlite_schema WHERE name = 'runs'`).get() as { sql: string }).sql).toContain(
-    "CHECK (status IN ('running', 'completed'))",
+    "CHECK (status IN ('running', 'completed', 'aborted'))",
   );
   expect((db.query(`PRAGMA index_info(idx_runs_project)`).all() as Array<{ name: string }>).map((r) => r.name)).toEqual([
     "project_id",
     "created_at",
   ]);
+});
+
+test("a DB stamped with an unknown schema version refuses to open instead of running against it", async () => {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "stale.db");
+  const oldDb = new Database(dbFile, { create: true });
+  oldDb.exec("PRAGMA user_version = 3;");
+  oldDb.close();
+  process.env.FUSION_DB = dbFile;
+
+  expect(() => storage.open()).toThrow("unsupported Fusion DB schema version 3");
+});
+
+test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a run row", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "r1", projectId: "p1" });
+
+  storage.recordCodexFailure(db, "r1", "codex exited 1: 429 too many requests", "quota");
+  let detail = storage.getRunDetails(db, "r1");
+  expect(detail.codexFailReason).toContain("429");
+  expect(detail.codexFailCategory).toBe("quota");
+
+  storage.clearCodexFailure(db, "r1");
+  detail = storage.getRunDetails(db, "r1");
+  expect(detail.codexFailReason).toBeNull();
+  expect(detail.codexFailCategory).toBeNull();
 });
 
 test("startRun normalizes missing titles and preserves the original title on idempotent starts", async () => {
@@ -80,17 +109,6 @@ test("startRun normalizes missing titles and preserves the original title on ide
   expect(storage.getRunDetails(db, "explicit").title).toBe("Explicit title");
   expect(storage.getRunDetails(db, "missing").title).toBe(storage.DEFAULT_RUN_TITLE);
   expect(storage.getRunDetails(db, "blank").title).toBe(storage.DEFAULT_RUN_TITLE);
-});
-
-test("schema v2 databases remain unsupported instead of being migrated implicitly", async () => {
-  const dir = await makeTempDir();
-  const dbFile = join(dir, "v2.db");
-  const oldDb = new Database(dbFile, { create: true });
-  oldDb.exec("PRAGMA user_version = 2;");
-  oldDb.close();
-  process.env.FUSION_DB = dbFile;
-
-  expect(() => storage.open()).toThrow("unsupported Fusion DB schema version 2");
 });
 
 test("putArtifact overwrites the selected embedded content column", async () => {
@@ -134,6 +152,61 @@ test("deleteRun removes the run and its embedded content", async () => {
   expect(storage.deleteRun(db, "r1")).toBe(true);
   expect(storage.getArtifact(db, "r1", "plan")).toBeNull();
   expect(storage.deleteRun(db, "missing")).toBe(false);
+});
+
+test("abortRun aborts a running run but refuses completed and already-aborted runs", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "run", projectId: "p1" });
+  storage.startRun(db, { runId: "done", projectId: "p1" });
+  storage.finishRun(db, "done");
+
+  storage.abortRun(db, "run");
+  expect(storage.getRunDetails(db, "run").status).toBe("aborted");
+  expect(() => storage.abortRun(db, "run")).toThrow("already aborted");
+  expect(() => storage.abortRun(db, "done")).toThrow("cannot abort a completed run");
+  expect(() => storage.abortRun(db, "ghost")).toThrow("run not found");
+});
+
+test("finishRun refuses to complete an aborted run and leaves its status untouched", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "discarded", projectId: "p1" });
+  storage.abortRun(db, "discarded");
+
+  expect(() => storage.finishRun(db, "discarded")).toThrow("cannot complete an aborted run");
+  expect(storage.getRunDetails(db, "discarded").status).toBe("aborted");
+
+  // A running run still completes normally.
+  storage.startRun(db, { runId: "live", projectId: "p1" });
+  storage.finishRun(db, "live");
+  expect(storage.getRunDetails(db, "live").status).toBe("completed");
+});
+
+test("getIncompleteRuns lists only running runs newest-first with artifact presence and drop reason", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/repo/proj" });
+  storage.startRun(db, { runId: "old", projectId: "p1", title: "Old run" });
+  storage.startRun(db, { runId: "new", projectId: "p1", title: "New run" });
+  storage.startRun(db, { runId: "done", projectId: "p1", title: "Done run" });
+  db.query(`UPDATE runs SET created_at = ? WHERE id = ?`).run("2026-01-01T00:00:00.000Z", "old");
+  db.query(`UPDATE runs SET created_at = ? WHERE id = ?`).run("2026-01-02T00:00:00.000Z", "new");
+  storage.finishRun(db, "done"); // completed → excluded from the incomplete list
+  storage.putArtifact(db, "new", "brief", "the brief");
+  storage.putArtifact(db, "new", "claude_report", "my leg");
+  storage.recordCodexFailure(db, "new", "429 too many requests", "quota");
+
+  const incomplete = storage.getIncompleteRuns(db);
+  expect(incomplete.map((r) => r.runId)).toEqual(["new", "old"]); // newest first, no completed run
+  const newRun = incomplete[0];
+  expect(newRun.projectDir).toBe("/repo/proj");
+  expect(newRun.artifacts).toEqual({ brief: true, claudeReport: true, codexReport: false, plan: false });
+  expect(newRun.codexFailReason).toContain("429");
+  expect(newRun.codexFailCategory).toBe("quota");
+
+  // getRunStatusRecord returns any status (incl. completed) and null for an unknown id.
+  expect(storage.getRunStatusRecord(db, "done")?.status).toBe("completed");
+  expect(storage.getRunStatusRecord(db, "ghost")).toBeNull();
 });
 
 test("cold-start: concurrent opens don't crash or lose writes (busy_timeout ordering)", async () => {

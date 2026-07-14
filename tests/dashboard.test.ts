@@ -4,13 +4,17 @@ import { join } from "node:path";
 import {
   browserOpenCommand,
   deleteRun,
+  findRunningDashboard,
   getProjects,
   getRunDetails,
   getRuns,
   handleRequest,
+  launchDashboard,
   serveDashboardAsset,
   serveDashboardHtml,
   setProjectDir,
+  setShutdownHandler,
+  stopRunningDashboard,
 } from "../plugin/skills/fusion/dashboard";
 import * as storage from "../plugin/skills/fusion/storage";
 import { useTempDirs } from "./helpers/temp";
@@ -121,6 +125,22 @@ test("getProjects lists every project, flags + sorts the launched one on top, an
   const betaRuns = await getRuns(); // default = current (beta)
   expect(betaRuns.map((r) => r.runId).sort()).toEqual(["beta-1", "beta-2"]);
   expect(betaRuns.map((r) => r.title).sort()).toEqual(["Beta first plan", "Beta second plan"]);
+});
+
+test("opening the dashboard is view-only — it never registers the launch directory as a project", async () => {
+  const root = await tempDir();
+  const freshProject = join(root, "never-ran-fusion-here");
+  await mkdir(freshProject, { recursive: true });
+  process.env.FUSION_DB = join(root, "view-only.db");
+
+  setProjectDir(freshProject); // open the dashboard from a directory Fusion never ran in
+
+  // Both data entrypoints that resolve the "current" project must stay read-only.
+  expect(await getRuns()).toEqual([]);
+  expect(await getProjects()).toEqual([]);
+
+  // The DB itself gained no project row — only start/relay may create one.
+  expect(storage.getProjects(storage.open())).toEqual([]);
 });
 
 test("dashboard renders escaped titles while keeping run ids as internal routing keys", async () => {
@@ -349,6 +369,120 @@ test("dashboard gives each report its own tab and keeps scrolling on the outer c
   expect(layout).not.toContain("max-height: 62vh");
   expect(layout).toContain(".sk-title");
   expect(layout).not.toContain(".sk-id");
+});
+
+test("identity + shutdown endpoints: identity is public, shutdown needs an injected handler", async () => {
+  const identity = await handleRequest(
+    new Request("http://localhost:38888/api/fusion-dashboard", { headers: { host: "localhost:38888" } }),
+  );
+  expect(identity.status).toBe(200);
+  expect(await identity.json()).toEqual({ fusionDashboard: true });
+
+  // Both lifecycle endpoints sit behind the DNS-rebinding Host guard like the rest of the API.
+  const rebound = await handleRequest(
+    new Request("http://evil.example/api/shutdown", { method: "POST", headers: { host: "evil.example" } }),
+  );
+  expect(rebound.status).toBe(403);
+
+  // No handler injected (launch.ts not in play) → shutdown is unavailable, never a crash/exit.
+  setShutdownHandler(null);
+  const unavailable = await handleRequest(
+    new Request("http://localhost:38888/api/shutdown", { method: "POST", headers: { host: "localhost:38888" } }),
+  );
+  expect(unavailable.status).toBe(503);
+
+  // With a handler, shutdown confirms first and fires the handler after the response is written.
+  let fired = false;
+  setShutdownHandler(() => {
+    fired = true;
+  });
+  const accepted = await handleRequest(
+    new Request("http://localhost:38888/api/shutdown", { method: "POST", headers: { host: "localhost:38888" } }),
+  );
+  expect(accepted.status).toBe(200);
+  expect(fired).toBe(false); // not yet — the exit is delayed past the response write
+  await Bun.sleep(250);
+  expect(fired).toBe(true);
+  setShutdownHandler(null);
+});
+
+test("dashboard lifecycle: relaunch replaces the old server on the SAME port; --stop shuts it down", async () => {
+  const port = 39877; // far outside the 38888+ default range — never touches a real dashboard
+  let exits = 0;
+  const opts = { open: false, log: () => {}, exit: () => { exits++; } };
+
+  const first = await launchDashboard({ port, ...opts });
+  expect(first.url).toBe(`http://localhost:${port}`);
+  expect(await findRunningDashboard(port)).toBe(port);
+
+  // Restart-not-reuse: a second launch stops the first server and reclaims the same port.
+  const second = await launchDashboard({ port, ...opts });
+  expect(exits).toBe(1);
+  expect(second.url).toBe(`http://localhost:${port}`);
+  expect(await findRunningDashboard(port)).toBe(port);
+
+  // The `dashboard --stop` path: finds it, stops it, and the port goes dark.
+  expect(await stopRunningDashboard(port)).toEqual({ stopped: true, port });
+  expect(exits).toBe(2);
+  expect(await findRunningDashboard(port)).toBeNull();
+
+  // Nothing running → clean no-op, not an error.
+  expect(await stopRunningDashboard(port)).toEqual({ stopped: false });
+  setShutdownHandler(null);
+});
+
+test("launch refuses to start a second dashboard when the running one will not stop", async () => {
+  const port = 39901; // outside the 38888+ default range — never touches a real dashboard
+  // A Fusion dashboard by identity, but /api/shutdown fails — so stopRunningDashboard reports
+  // {stopped:false, port}. launchDashboard must reject rather than binding the next port.
+  const stubborn = Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    fetch: (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/api/fusion-dashboard") return Response.json({ fusionDashboard: true });
+      if (url.pathname === "/api/shutdown") return new Response("no", { status: 500 });
+      return new Response("stubborn");
+    },
+  });
+  try {
+    let exits = 0;
+    await expect(
+      launchDashboard({ port, open: false, log: () => {}, exit: () => { exits++; } }),
+    ).rejects.toThrow("could not stop it");
+    // No second server was started: the stubborn one still owns `port`, and nothing bound the next.
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("stubborn");
+    expect(await findRunningDashboard(port + 1)).toBeNull();
+    expect(exits).toBe(0);
+  } finally {
+    stubborn.stop(true);
+    setShutdownHandler(null);
+  }
+});
+
+test("a foreign app on the port is never touched: probe says no, stop skips it, launch steps past it", async () => {
+  const port = 39899;
+  const foreign = Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    fetch: () => new Response("not fusion"),
+  });
+  try {
+    expect(await findRunningDashboard(port)).toBeNull();
+    expect(await stopRunningDashboard(port)).toEqual({ stopped: false });
+
+    // Launching against the occupied port leaves the foreign app alive and binds the NEXT port.
+    let exits = 0;
+    const launched = await launchDashboard({ port, open: false, log: () => {}, exit: () => { exits++; } });
+    expect(launched.url).toBe(`http://localhost:${port + 1}`);
+    expect((await (await fetch(`http://127.0.0.1:${port}/`)).text())).toBe("not fusion");
+
+    expect(await stopRunningDashboard(port)).toEqual({ stopped: true, port: port + 1 });
+    expect(exits).toBe(1);
+  } finally {
+    foreign.stop(true);
+    setShutdownHandler(null);
+  }
 });
 
 test("dashboard chooses the native browser launcher for each supported operating system", () => {
