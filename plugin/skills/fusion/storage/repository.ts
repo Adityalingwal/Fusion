@@ -107,6 +107,11 @@ export function startRun(
 }
 
 export function finishRun(db: Database, runId: string): void {
+  // A user-discarded (aborted) run must NOT be resurrected to completed — in a two-session race, an
+  // Approve in a stale session B would otherwise silently undo a Discard from session A. Only aborted
+  // is guarded; running/completed keep the current behavior, and a missing row stays a warn (below).
+  const row = db.query(`SELECT status FROM runs WHERE id = ?`).get(runId) as { status: string } | undefined;
+  if (row?.status === "aborted") throw new Error(`cannot complete an aborted run: ${runId}`);
   const res = db.query(`UPDATE runs SET status = 'completed' WHERE id = ?`).run(runId);
   if (res.changes === 0) console.error(`finishRun: matched no run — unknown id '${runId}'`);
 }

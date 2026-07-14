@@ -336,6 +336,13 @@ test("list/status/abort power the resume flow", async () => {
   expect(reabort.code).not.toBe(0);
   expect(reabort.stderr).toContain("already aborted");
   expect(json((await runBun(fusionPath, ["status", "--run-id", "resumable"], common)).stdout).run.status).toBe("aborted");
+
+  // finish must NOT resurrect the aborted run — it errors cleanly and the status stays aborted.
+  const finishAborted = await runBun(fusionPath, ["finish", "--run-id", "resumable"], common);
+  expect(finishAborted.code).not.toBe(0);
+  expect(finishAborted.stdout).toBe("");
+  expect(finishAborted.stderr).toContain("cannot complete an aborted run");
+  expect(json((await runBun(fusionPath, ["status", "--run-id", "resumable"], common)).stdout).run.status).toBe("aborted");
 });
 
 test("plugin-internal CLI rejects bad commands and SKILL.md uses only the cross-platform entrypoint", async () => {

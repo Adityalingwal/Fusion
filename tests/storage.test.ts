@@ -168,6 +168,21 @@ test("abortRun aborts a running run but refuses completed and already-aborted ru
   expect(() => storage.abortRun(db, "ghost")).toThrow("run not found");
 });
 
+test("finishRun refuses to complete an aborted run and leaves its status untouched", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "discarded", projectId: "p1" });
+  storage.abortRun(db, "discarded");
+
+  expect(() => storage.finishRun(db, "discarded")).toThrow("cannot complete an aborted run");
+  expect(storage.getRunDetails(db, "discarded").status).toBe("aborted");
+
+  // A running run still completes normally.
+  storage.startRun(db, { runId: "live", projectId: "p1" });
+  storage.finishRun(db, "live");
+  expect(storage.getRunDetails(db, "live").status).toBe("completed");
+});
+
 test("getIncompleteRuns lists only running runs newest-first with artifact presence and drop reason", async () => {
   const { db } = await freshDb();
   storage.ensureProject(db, { id: "p1", name: "proj", root: "/repo/proj" });

@@ -215,7 +215,11 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       const runId = requiredString(args, "run-id");
       const db = storage.open();
       ensureRunExists(db, runId);
-      storage.finishRun(db, runId);
+      try {
+        storage.finishRun(db, runId);
+      } catch (error) {
+        throw new CliError(error instanceof Error ? error.message : String(error));
+      }
       writeJson({ ok: true, command, runId, status: "completed" });
       return;
     }
