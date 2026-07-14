@@ -217,27 +217,30 @@ whose leg it is.
    **Then save a durable draft to the DB**
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`.
 
-10. **Show the user → Approve / Discard / correct → finalize.** **Lead with Council Health `2/2 Full`**
-    (both legs synthesized). *(A `1/2` single-model result never reaches this step — it is finished via the
-    Single-model branch below, under its own ⚠️ banner. Reaching step 10 means GPT's leg was present, so this is
-    always a real council.)* Then show: the synthesized plan, a short "where they agreed / split", and any
-    **⚠️ User-Challenge** prominently. **Advisor display rule** (the advisor's fixes were already folded into
-    the plan before this point, so its routine verdict is NOT shown): show the plan clean. Only two things ever
-    surface: if the advisor call **failed/timed out**, add one plain line ("the advisor check didn't run — this
-    plan is un-reviewed by it"); if an advisor catch **needs a user decision** (not a fix you could fold in),
-    surface it as a short note beside the plan. Never dump the routine verdict.
-    Then **ask via the question UI** — exactly two options + the built-in free-text box:
-    **[Approve — finalize the plan]** · **[Discard — drop this run]**.
-    - **Approve** → **re-save the final plan to the DB** (synchronous, overwrites the draft)
-      `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`, then
-      `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file** (do not delete).
-      Don't dump the raw reports — point to the dashboard (`fusion dashboard`); for a committed doc use
-      `fusion.ts export` (on demand).
-    - **Discard** → `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <run-id>` + a one-line confirmation
-      (this is what stops a rejected plan from lingering as `running` and haunting the resume picker).
-    - **Free-text = the corrections channel** (there is no separate "Correct" button — the box IS it). A typed
-      reply outranks the buttons: apply the user's edits to the temp file (NOT re-reviewed — the user is the
-      authority), show the updated plan, and re-ask this same menu. As many rounds as the user needs.
+10. **Show the user → finalize.** **Lead with Council Health `2/2 Full`** (both legs synthesized). *(A `1/2`
+    single-model result never reaches this step — it is finished via the Single-model branch below, under its
+    own ⚠️ banner. Reaching step 10 means GPT's leg was present, so this is always a real council.)* Then show:
+    the synthesized plan, a short "where they agreed / split", and any **⚠️ User-Challenge** prominently.
+    Then apply the **Shared finalize menu** (below) — advisor display rule + Approve / Discard / corrections.
+
+### Shared: the finalize menu (used by step 10 and the Single-model branch)
+- **Advisor display rule** — the advisor's fixes were already folded into the plan before this point, so its
+  routine verdict is NOT shown: show the plan clean. Only two things ever surface: if the advisor call
+  **failed/timed out**, add one plain line ("the advisor check didn't run — this plan is un-reviewed by it");
+  if an advisor catch **needs a user decision** (not a fix you could fold in), surface it as a short note
+  beside the plan. Never dump the routine verdict.
+- **The menu** — **ask via the question UI** — exactly two options + the built-in free-text box:
+  **[Approve — finalize the plan]** · **[Discard — drop this run]**.
+  - **Approve** → **re-save the final plan to the DB** (synchronous, overwrites the draft)
+    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`, then
+    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file** (do not delete).
+    Don't dump the raw reports — point to the dashboard (`fusion dashboard`); for a committed doc use
+    `fusion.ts export` (on demand).
+  - **Discard** → `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <run-id>` + a one-line confirmation
+    (this is what stops a rejected plan from lingering as `running` and haunting the resume picker).
+  - **Free-text = the corrections channel** (there is no separate "Correct" button — the box IS it). A typed
+    reply outranks the buttons: apply the user's edits to the temp file (NOT re-reviewed — the user is the
+    authority), show the updated plan, and re-ask this same menu. As many rounds as the user needs.
 
 ### Single-model (Claude-only) branch — an explicit user choice, never a default
 Reached ONLY when GPT dropped mid-run and the user chose "Single-model" over retry/resume at step 7's menu.
@@ -250,17 +253,9 @@ There is one leg, so critique + synthesis (steps 7–8) are meaningless and **SK
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`.
 4. **Present under a loud banner:** `⚠️ Single-model plan — no council cross-check (GPT dropped: <reason>)`. Show
    the plan clean under the banner (no per-line `[unverified]` spam — the banner labels the whole plan as
-   single-model). **Advisor display rule (same as step 10):** the advisor's fixes are already folded in, so its
-   routine verdict is NOT shown; only surface a one-liner if the advisor call failed/timed out, or a short note
-   if an advisor catch needs a user decision.
-5. **Approve / Discard / correct — same menu as step 10.** Ask via the question UI: **[Approve — finalize the
-   plan]** · **[Discard — drop this run]** + the free-text box.
-   - **Approve** → re-save the final plan to the DB
-     `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`, then
-     `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file.**
-   - **Discard** → `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <run-id>` + a one-line confirmation.
-   - **Free-text = corrections** (a typed reply outranks the buttons): apply the edits (not re-reviewed — the
-     user is the authority), show the updated plan, re-ask this menu. As many rounds as needed.
+   single-model).
+5. **Finalize** — apply the **Shared finalize menu** (above): same advisor display rule, same two buttons,
+   same corrections loop.
 
 ---
 
