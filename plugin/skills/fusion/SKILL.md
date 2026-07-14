@@ -130,8 +130,7 @@ ONE short clarifying question. Never silently map a typed answer onto the neares
    The runner reads the brief from the DB, runs Codex (hard timeout; the model + reasoning effort come
    from the user's own `~/.codex/config.toml`), and writes the `codex_report` back to the DB. Its last
    stdout line is a JSON summary: `codexAvailable`, and on a drop a `reason` **and a `category`
-   (`transient | quota | fixable | unknown`)** that step 7 uses to offer the right recovery choice. A
-   drop no longer fabricates a report or silently degrades the run — you decide what happens next.
+   (`transient | quota | fixable | unknown`)** that step 7 uses to offer the right recovery choice.
 
 6. **Write YOUR OWN leg, BLIND → save as the `claude_report` artifact** (same report format as the brief).
    Write it to a temp file, then
@@ -203,8 +202,6 @@ ONE short clarifying question. Never silently map a typed answer onto the neares
      **⚠️ User-Challenge** block: what the user said · why both disagree (with proof) · the cost if wrong · the
      user's direction stands unless they change it. One leg only against = normal dissent, not this. Firewall:
      never raise it on your own leg alone.
-   (Reaching step 8 means BOTH legs are present — a GPT drop was already resolved at step 7's menu, so there is
-   no fail-open path here.)
    Write ONE clean plan (not an append-pile of "supersedes X" layers) to a **temp file** — this is the working
    copy through the next steps; it is **not** saved to the DB yet (that happens in step 9, then step 10).
 
