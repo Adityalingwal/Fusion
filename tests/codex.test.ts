@@ -15,6 +15,9 @@ test("classifyCodexFailure buckets each recognizable Codex drop reason", () => {
     ["codex exited 1: not logged in → Run: codex login", "fixable"],
     ["codex exited 1: [401] unauthorized", "fixable"],
     ["codex exited 1: requires a newer version of codex", "fixable"],
+    // a stale CLI whose argv parser rejects a runner flag is fixable (update the CLI), not unknown
+    ["codex exited 1: unexpected argument '--ephemeral' found", "fixable"],
+    ["codex exited 1: unrecognized option '--json'", "fixable"],
     ["codex could not start: executable not found in $PATH", "fixable"],
     ["codex could not start: spawn codex ENOENT", "fixable"],
     // transient — likely to pass on a plain retry
@@ -43,6 +46,7 @@ test("actionableHint maps quota/limit reasons to the human GPT-limit fix, never 
     "usage limit reached",
     "quota exhausted",
     "429 too many requests",
+    "rate limit exceeded",
   ]) {
     const hint = actionableHint(msg);
     expect(hint).toContain("Your GPT usage limit is exhausted");

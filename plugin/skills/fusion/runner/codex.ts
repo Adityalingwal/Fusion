@@ -28,7 +28,7 @@ export function classifyCodexFailure(reason: string): CodexFailCategory {
   // A concrete, user-fixable setup problem: not authed, or a stale/absent CLI (the last two should be
   // pre-caught by preflight, but classify them anyway for a mid-run relay that regressed).
   if (
-    /not logged in|not authenticated|unauthorized|\b401\b|newer version of codex|requires a newer version|upgrade the cli|executable not found|not found in \$?path|\benoent\b|no such file/.test(
+    /not logged in|not authenticated|unauthorized|\b401\b|newer version of codex|requires a newer version|upgrade the cli|unexpected argument|unrecognized option|executable not found|not found in \$?path|\benoent\b|no such file/.test(
       r,
     )
   ) {
@@ -90,7 +90,7 @@ export function actionableHint(message: string): string {
   // Out of credits / usage cap / rate-limited (429). Retrying now would just fail again — the model
   // quota has to reset first, so the "fix" is to wait, not a command. (Named "GPT" — it's the model,
   // not the CLI tool.)
-  if (/insufficient credit|usage limit|quota|\b429\b|too many requests/i.test(message)) {
+  if (/insufficient credit|usage limit|quota|\b429\b|too many requests|rate limit/i.test(message)) {
     return `${message}\n  → Your GPT usage limit is exhausted — wait for it to reset, then run /fusion again.`;
   }
   // Codex not installed / not on PATH (spawn ENOENT). Only the npm global CLI is usable — the
