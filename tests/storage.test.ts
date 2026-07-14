@@ -33,7 +33,7 @@ test("run content roundtrips via getRunDetails", async () => {
   expect(d.createdAt).toBeTruthy();
 });
 
-test("schema v4 has only projects and titled runs with embedded content + codex-failure columns", async () => {
+test("schema has only projects and titled runs with embedded content + codex-failure columns", async () => {
   const { db } = await freshDb();
   const tables = db
     .query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -54,7 +54,7 @@ test("schema v4 has only projects and titled runs with embedded content + codex-
     "codex_fail_reason",
     "codex_fail_category",
   ]);
-  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(4);
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(1);
   const titleColumn = (db.query(`PRAGMA table_info(runs)`).all() as Array<{
     name: string;
     notnull: number;
@@ -71,45 +71,20 @@ test("schema v4 has only projects and titled runs with embedded content + codex-
   ]);
 });
 
-test("an existing v3 database upgrades to v4 in place, preserving rows and admitting the aborted status", async () => {
-  const dir = await makeTempDir();
-  const dbFile = join(dir, "v3.db");
-  // Build a realistic v0.1.x (schema v3) DB with a project + a run that carries content, then close.
-  const oldDb = new Database(dbFile, { create: true });
-  oldDb.exec(`
-    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, root_path TEXT, created_at TEXT);
-    CREATE TABLE runs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
-      title TEXT NOT NULL DEFAULT 'Untitled run',
-      status TEXT NOT NULL CHECK (status IN ('running', 'completed')),
-      created_at TEXT NOT NULL,
-      brief TEXT, claude_report TEXT, codex_report TEXT, plan TEXT
-    );
-    CREATE INDEX idx_runs_project ON runs(project_id, created_at DESC);
-  `);
-  oldDb.query(`INSERT INTO projects (id, name, root_path, created_at) VALUES ('p1', 'proj', '/x', '2026-01-01T00:00:00.000Z')`).run();
-  oldDb
-    .query(`INSERT INTO runs (id, project_id, title, status, created_at, brief) VALUES ('old-run', 'p1', 'Legacy plan', 'running', '2026-01-01T00:00:00.000Z', 'legacy brief')`)
-    .run();
-  oldDb.exec("PRAGMA user_version = 3;");
-  oldDb.close();
+test("a DB stamped with any pre-reset schema version refuses to open with delete-and-restart guidance", async () => {
+  // Pre-release stance: no migrations. Whatever version an old file carries (the pre-reset 3, or
+  // anything else), open() must refuse with a message that names the file and the fix.
+  for (const staleVersion of [2, 3, 4]) {
+    const dir = await makeTempDir();
+    const dbFile = join(dir, `stale-v${staleVersion}.db`);
+    const oldDb = new Database(dbFile, { create: true });
+    oldDb.exec(`PRAGMA user_version = ${staleVersion};`);
+    oldDb.close();
+    process.env.FUSION_DB = dbFile;
 
-  process.env.FUSION_DB = dbFile;
-  const db = storage.open(); // triggers migrateV3toV4
-
-  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(4);
-  const columns = (db.query(`PRAGMA table_info(runs)`).all() as Array<{ name: string }>).map((c) => c.name);
-  expect(columns).toContain("codex_fail_reason");
-  expect(columns).toContain("codex_fail_category");
-  // The legacy row survives with its content intact.
-  const detail = storage.getRunDetails(db, "old-run");
-  expect(detail.title).toBe("Legacy plan");
-  expect(detail.brief).toBe("legacy brief");
-  expect(detail.status).toBe("running");
-  expect(detail.codexFailReason).toBeNull();
-  // The widened CHECK now admits 'aborted' (the whole point of the rebuild).
-  expect(() => db.query(`UPDATE runs SET status = 'aborted' WHERE id = 'old-run'`).run()).not.toThrow();
+    expect(() => storage.open()).toThrow(`predates a pre-release schema reset (found v${staleVersion})`);
+    expect(() => storage.open()).toThrow(dbFile);
+  }
 });
 
 test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a run row", async () => {
@@ -139,17 +114,6 @@ test("startRun normalizes missing titles and preserves the original title on ide
   expect(storage.getRunDetails(db, "explicit").title).toBe("Explicit title");
   expect(storage.getRunDetails(db, "missing").title).toBe(storage.DEFAULT_RUN_TITLE);
   expect(storage.getRunDetails(db, "blank").title).toBe(storage.DEFAULT_RUN_TITLE);
-});
-
-test("schema v2 databases remain unsupported instead of being migrated implicitly", async () => {
-  const dir = await makeTempDir();
-  const dbFile = join(dir, "v2.db");
-  const oldDb = new Database(dbFile, { create: true });
-  oldDb.exec("PRAGMA user_version = 2;");
-  oldDb.close();
-  process.env.FUSION_DB = dbFile;
-
-  expect(() => storage.open()).toThrow("unsupported Fusion DB schema version 2");
 });
 
 test("putArtifact overwrites the selected embedded content column", async () => {
