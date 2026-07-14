@@ -274,6 +274,29 @@ test("put refuses empty/whitespace-only content and stores nothing", async () =>
   expect(blockedGet.stderr).toContain("blind rule");
 });
 
+test("get/export on a non-existent run report 'run not found', not the blind-rule message", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "ghost.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  const get = await runBun(fusionPath, ["get", "--run-id", "ghost", "--type", "codex_report"], common);
+  expect(get.code).not.toBe(0);
+  expect(get.stderr).toContain("run not found");
+  expect(get.stderr).not.toContain("blind rule");
+
+  const exported = await runBun(
+    fusionPath,
+    ["export", "--run-id", "ghost", "--type", "codex_report", "--out", join(project, "x.md")],
+    common,
+  );
+  expect(exported.code).not.toBe(0);
+  expect(exported.stderr).toContain("run not found");
+  expect(exported.stderr).not.toContain("blind rule");
+});
+
 test("list/status/abort power the resume flow", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);

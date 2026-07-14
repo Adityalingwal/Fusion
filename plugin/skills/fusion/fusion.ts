@@ -175,6 +175,7 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       const runId = requiredString(args, "run-id");
       const type = requiredArtifactType(args);
       const db = storage.open();
+      ensureRunExists(db, runId);
       assertBlindRuleSatisfied(db, runId, type);
       const content = storage.getArtifact(db, runId, type);
       if (content === null) throw new CliError(`content not found: ${runId}/${type}`);
@@ -223,6 +224,7 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       const type = requiredArtifactType(args);
       const out = resolve(requiredString(args, "out"));
       const db = storage.open();
+      ensureRunExists(db, runId);
       assertBlindRuleSatisfied(db, runId, type);
       const content = storage.getArtifact(db, runId, type);
       if (content === null) throw new CliError(`content not found: ${runId}/${type}`);
