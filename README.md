@@ -26,6 +26,14 @@ flowchart TD
 3. **Fusion puts them together into one plan.** If the two models disagreed on something, it tells you instead of hiding it.
 4. **You get one clear plan** you can start building from — saved on your own computer, so you can come back to it later.
 
+## Reliable by design
+
+Fusion only helps if **both** models actually run — one model on its own is just one model. So:
+
+- **It checks GPT before every run.** If GPT isn't ready — not installed, not signed in, out of date, or out of credits — Fusion tells you exactly what's wrong and how to fix it, and doesn't start a run that would only end up half-done.
+- **If GPT drops partway through, you decide what happens.** Try again, come back to it later (your run is saved), take a single-model plan that's clearly labeled as *not* cross-checked, or stop. Fusion never quietly hands you a one-model plan dressed up as the real thing.
+- **Interrupted runs can be picked up later.** If a run gets cut off, say `/fusion resume` and carry on from where it stopped — even in a new session.
+
 ## What you need
 
 - You need a paid Claude Code plan.
