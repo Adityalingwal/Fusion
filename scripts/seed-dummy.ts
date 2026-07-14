@@ -140,7 +140,7 @@ async function main() {
     mk(2, current, "completed", 1, "Add JWT refresh-token rotation to the auth flow"),
     mk(3, current, "completed", 2, "Rate-limit the public API endpoints", { noCodex: true }),
     mk(4, current, "completed", 4, "Fix the WAL two-writer race between runner and storage"),
-    mk(5, current, "completed", 6, "Add doctor --smoke check for CLI credit exhaustion"),
+    mk(5, current, "completed", 6, "Sharpen the preflight quota-error message"),
     mk(6, current, "completed", 9, "Migrate run artifacts from file tree to SQLite blobs"),
     mk(7, acme, "completed", 1, "Add idempotency keys to the payments webhook"),
     mk(8, acme, "completed", 3, "Split the monolith router into per-domain modules"),
