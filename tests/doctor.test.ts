@@ -57,21 +57,24 @@ test("doctor checks required codex flags and prints quota caveat", async () => {
   expect(missing.stdout).toContain("incompatible exec flags");
 });
 
-test("doctor --smoke probes the relay and fails on credit/relay errors", async () => {
+test("doctor always fires the model ping and fails on a credit/relay error", async () => {
   const root = await tempDir();
   const { bin, log } = await makeFakeBin(root);
 
-  const ok = await runBun(doctorPath, ["--smoke"], { cwd: root, bin, log });
+  // The model ping is default, not opt-in — a healthy CLI reports the configured model responded.
+  const ok = await runBun(doctorPath, [], { cwd: root, bin, log });
   expect(ok.code).toBe(0);
-  expect(ok.stdout).toContain("Smoke test");
+  expect(ok.stdout).toContain("Model ping");
   expect(ok.stdout).toContain("responded");
 
-  const failure = await runBun(doctorPath, ["--smoke"], {
+  // A failing ping (non-zero exit) drops the leg: doctor exits non-zero and flags the model line.
+  const failure = await runBun(doctorPath, [], {
     cwd: root,
     bin,
     log,
     env: { FAKE_CODEX_EXIT: "1" },
   });
   expect(failure.code).toBe(1);
-  expect(failure.stdout).toContain("Codex smoke");
+  expect(failure.stdout).toContain("Codex model");
+  expect(failure.stdout).toContain("Fusion degraded");
 });

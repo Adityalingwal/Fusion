@@ -5,10 +5,13 @@
 // It deliberately does NOT run the Claude leg or the synthesis. The host Claude Code session
 // contributes its own (Claude) leg and does the final synthesis via the skill — a runner subprocess
 // cannot capture its parent session anyway. So the runner's whole job is the deterministic part: run
-// Codex with a hard timeout, FAIL-OPEN (relay down → note the drop, synthesize with what's available),
-// and persist the raw report to the SHARED SQLite store (skills/fusion/storage.ts).
-// NOTHING is written into the project dir. It prints a JSON summary as the last stdout line so the
-// skill can read what happened.
+// Codex with a hard timeout and persist the raw report to the SHARED SQLite store
+// (skills/fusion/storage.ts). If Codex drops, the runner does NOT fabricate a report or silently
+// degrade the run — it records the drop reason + a category (transient|quota|fixable|unknown) on the
+// run row and surfaces both in its JSON summary, so the skill can let the USER choose what happens
+// next (retry / resume later / single-model / abort). The runner itself stays fail-safe as a PROCESS:
+// it always prints its JSON summary line and never crashes without one.
+// NOTHING is written into the project dir.
 //
 // Brief source (priority): the run's stored `brief` for --run-id · else --brief-file · else stdin.
 // Storage: the run row and its content live in ~/.fusion/fusion.db (FUSION_DB).
@@ -101,10 +104,11 @@ async function main(): Promise<void> {
   if (codex.status === "failed") console.error(`  codex dropped: ${codex.reason}`);
   if (codex.formatWarning) console.error("  codex: format_warning — report missing the requested ## sections");
 
-  // Machine-readable summary as the LAST stdout line (the skill parses this).
+  // Machine-readable summary as the LAST stdout line (the skill parses this). On a drop it carries
+  // BOTH the raw reason and its category so the skill can present the right choice menu.
   const summary = codex.status === "ok"
     ? { runId, codexAvailable: true }
-    : { runId, codexAvailable: false, reason: codex.reason };
+    : { runId, codexAvailable: false, reason: codex.reason, category: codex.category };
   console.log(JSON.stringify(summary));
 }
 

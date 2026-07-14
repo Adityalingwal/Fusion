@@ -111,6 +111,27 @@ export function finishRun(db: Database, runId: string): void {
   if (res.changes === 0) console.error(`finishRun: matched no run — unknown id '${runId}'`);
 }
 
+// The category the runner attaches to a dropped Codex leg (see runner/codex.ts classifyCodexFailure).
+export const CODEX_FAIL_CATEGORIES = ["transient", "quota", "fixable", "unknown"] as const;
+export type CodexFailCategory = (typeof CODEX_FAIL_CATEGORIES)[number];
+
+// Persist WHY the Codex leg dropped onto the run row. Replaces the old fake "# Codex — UNAVAILABLE"
+// placeholder artifact: a codex_report in the DB is now always a real report, and the failure lives
+// here instead so `status` / the dashboard can still explain the drop. Warns (never throws) on a
+// missing row — this is called from the failure path, where a second throw would bury the real cause.
+export function recordCodexFailure(db: Database, runId: string, reason: string, category: CodexFailCategory): void {
+  const res = db
+    .query(`UPDATE runs SET codex_fail_reason = ?, codex_fail_category = ? WHERE id = ?`)
+    .run(reason, category, runId);
+  if (res.changes === 0) console.error(`recordCodexFailure: matched no run — unknown id '${runId}'`);
+}
+
+// Clear a previously-recorded Codex failure — called when a later leg succeeds (the retry/resume
+// case) so a stale drop reason never lingers on a now-healthy run.
+export function clearCodexFailure(db: Database, runId: string): void {
+  db.query(`UPDATE runs SET codex_fail_reason = NULL, codex_fail_category = NULL WHERE id = ?`).run(runId);
+}
+
 export function putArtifact(db: Database, runId: string, type: ArtifactType, content: string): void {
   const column = artifactColumns[type];
   const res = db.query(`UPDATE runs SET ${column} = ? WHERE id = ?`).run(content, runId);
@@ -150,7 +171,11 @@ export function getRuns(db: Database, projectId: string): RunSummary[] {
 
 export function getRunDetails(db: Database, runId: string) {
   const run = db
-    .query(`SELECT id, project_id, title, status, created_at, brief, claude_report, codex_report, plan FROM runs WHERE id = ?`)
+    .query(
+      `SELECT id, project_id, title, status, created_at, brief, claude_report, codex_report, plan,
+              codex_fail_reason, codex_fail_category
+       FROM runs WHERE id = ?`,
+    )
     .get(runId) as
     | {
         id: string;
@@ -162,6 +187,8 @@ export function getRunDetails(db: Database, runId: string) {
         claude_report: string | null;
         codex_report: string | null;
         plan: string | null;
+        codex_fail_reason: string | null;
+        codex_fail_category: string | null;
       }
     | undefined;
   if (!run) throw new Error(`run not found: ${runId}`);
@@ -175,6 +202,8 @@ export function getRunDetails(db: Database, runId: string) {
     claudeReport: run.claude_report,
     codexReport: run.codex_report,
     plan: run.plan,
+    codexFailReason: run.codex_fail_reason,
+    codexFailCategory: run.codex_fail_category,
   };
 }
 

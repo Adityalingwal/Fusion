@@ -5,12 +5,40 @@ import { join } from "node:path";
 import * as storage from "../storage";
 import { lastStderr, runProc } from "../lib/subprocess";
 
+import type { CodexFailCategory } from "../storage";
+
 type LegStatus = "ok" | "failed";
 
 export interface LegResult {
   status: LegStatus;
   reason?: string;
+  category?: CodexFailCategory;
   formatWarning?: boolean;
+}
+
+// Classify a Codex drop reason so the skill can offer only the choices that make sense for it
+// (retry / resume-later / fix / single-model / abort). Pure string → string, so it is unit-tested
+// directly against the reason strings this file already produces (via extractCodexError /
+// actionableHint / timeout / spawn errors). Order matters: quota is checked before the generic
+// rate/5xx transient bucket so a 429 lands as quota, not transient.
+export function classifyCodexFailure(reason: string): CodexFailCategory {
+  const r = reason.toLowerCase();
+  // Out of credits / hit a usage or rate cap → retrying now just fails again; the user must wait.
+  if (/insufficient credit|usage limit|rate limit|\b429\b|too many requests|quota/.test(r)) return "quota";
+  // A concrete, user-fixable setup problem: not authed, or a stale/absent CLI (the last two should be
+  // pre-caught by preflight, but classify them anyway for a mid-run relay that regressed).
+  if (
+    /not logged in|not authenticated|unauthorized|\b401\b|newer version of codex|requires a newer version|upgrade the cli|executable not found|not found in \$?path|\benoent\b|no such file/.test(
+      r,
+    )
+  ) {
+    return "fixable";
+  }
+  // Likely to succeed on a plain retry: timeouts, network blips, 5xx.
+  if (/timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/.test(r)) {
+    return "transient";
+  }
+  return "unknown";
 }
 
 // A report is "structured" if it kept at least two of the requested `##` sections. We only WARN on a
@@ -150,19 +178,20 @@ export async function runCodexLeg(
     }
     if (!text) throw new Error("empty final message");
     storage.putArtifact(db, runId, "codex_report", text);
+    // Retry/resume case: a prior failed attempt may have stamped a drop reason on the row — clear it
+    // now that a real report landed, so the run reads as healthy.
+    storage.clearCodexFailure(db, runId);
     return {
       status: "ok",
       formatWarning: !hasStructuredFormat(text),
     };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    storage.putArtifact(
-      db,
-      runId,
-      "codex_report",
-      `# Codex — UNAVAILABLE\n\nThis leg failed (fail-open): ${reason}\n`,
-    );
-    return { status: "failed", reason };
+    const category = classifyCodexFailure(reason);
+    // NO placeholder artifact: a codex_report in the DB is always a real report now. Persist the
+    // reason + category on the run row instead, so `status` / the dashboard can still explain the drop.
+    storage.recordCodexFailure(db, runId, reason, category);
+    return { status: "failed", reason, category };
   } finally {
     await rm(outPath, { force: true }).catch(() => {});
   }

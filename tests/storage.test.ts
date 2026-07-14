@@ -33,7 +33,7 @@ test("run content roundtrips via getRunDetails", async () => {
   expect(d.createdAt).toBeTruthy();
 });
 
-test("schema v3 has only projects and titled runs with embedded content columns", async () => {
+test("schema v4 has only projects and titled runs with embedded content + codex-failure columns", async () => {
   const { db } = await freshDb();
   const tables = db
     .query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -51,8 +51,10 @@ test("schema v3 has only projects and titled runs with embedded content columns"
     "claude_report",
     "codex_report",
     "plan",
+    "codex_fail_reason",
+    "codex_fail_category",
   ]);
-  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(3);
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(4);
   const titleColumn = (db.query(`PRAGMA table_info(runs)`).all() as Array<{
     name: string;
     notnull: number;
@@ -61,12 +63,69 @@ test("schema v3 has only projects and titled runs with embedded content columns"
   expect(titleColumn).toMatchObject({ notnull: 1, dflt_value: "'Untitled run'" });
   expect((db.query(`PRAGMA foreign_key_list(runs)`).get() as { table: string }).table).toBe("projects");
   expect((db.query(`SELECT sql FROM sqlite_schema WHERE name = 'runs'`).get() as { sql: string }).sql).toContain(
-    "CHECK (status IN ('running', 'completed'))",
+    "CHECK (status IN ('running', 'completed', 'aborted'))",
   );
   expect((db.query(`PRAGMA index_info(idx_runs_project)`).all() as Array<{ name: string }>).map((r) => r.name)).toEqual([
     "project_id",
     "created_at",
   ]);
+});
+
+test("an existing v3 database upgrades to v4 in place, preserving rows and admitting the aborted status", async () => {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "v3.db");
+  // Build a realistic v0.1.x (schema v3) DB with a project + a run that carries content, then close.
+  const oldDb = new Database(dbFile, { create: true });
+  oldDb.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, root_path TEXT, created_at TEXT);
+    CREATE TABLE runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL DEFAULT 'Untitled run',
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed')),
+      created_at TEXT NOT NULL,
+      brief TEXT, claude_report TEXT, codex_report TEXT, plan TEXT
+    );
+    CREATE INDEX idx_runs_project ON runs(project_id, created_at DESC);
+  `);
+  oldDb.query(`INSERT INTO projects (id, name, root_path, created_at) VALUES ('p1', 'proj', '/x', '2026-01-01T00:00:00.000Z')`).run();
+  oldDb
+    .query(`INSERT INTO runs (id, project_id, title, status, created_at, brief) VALUES ('old-run', 'p1', 'Legacy plan', 'running', '2026-01-01T00:00:00.000Z', 'legacy brief')`)
+    .run();
+  oldDb.exec("PRAGMA user_version = 3;");
+  oldDb.close();
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open(); // triggers migrateV3toV4
+
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(4);
+  const columns = (db.query(`PRAGMA table_info(runs)`).all() as Array<{ name: string }>).map((c) => c.name);
+  expect(columns).toContain("codex_fail_reason");
+  expect(columns).toContain("codex_fail_category");
+  // The legacy row survives with its content intact.
+  const detail = storage.getRunDetails(db, "old-run");
+  expect(detail.title).toBe("Legacy plan");
+  expect(detail.brief).toBe("legacy brief");
+  expect(detail.status).toBe("running");
+  expect(detail.codexFailReason).toBeNull();
+  // The widened CHECK now admits 'aborted' (the whole point of the rebuild).
+  expect(() => db.query(`UPDATE runs SET status = 'aborted' WHERE id = 'old-run'`).run()).not.toThrow();
+});
+
+test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a run row", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "r1", projectId: "p1" });
+
+  storage.recordCodexFailure(db, "r1", "codex exited 1: 429 too many requests", "quota");
+  let detail = storage.getRunDetails(db, "r1");
+  expect(detail.codexFailReason).toContain("429");
+  expect(detail.codexFailCategory).toBe("quota");
+
+  storage.clearCodexFailure(db, "r1");
+  detail = storage.getRunDetails(db, "r1");
+  expect(detail.codexFailReason).toBeNull();
+  expect(detail.codexFailCategory).toBeNull();
 });
 
 test("startRun normalizes missing titles and preserves the original title on idempotent starts", async () => {

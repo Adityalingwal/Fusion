@@ -127,7 +127,7 @@ test("doctor keeps diagnostics on stderr and JSON on stdout", async () => {
   const result = await runBun(fusionPath, ["doctor"], { cwd: root, bin, log });
 
   expect(result.code).toBe(0);
-  expect(json(result.stdout)).toEqual({ ok: true, command: "doctor", smoke: false });
+  expect(json(result.stdout)).toEqual({ ok: true, command: "doctor" });
   expect(result.stderr).toContain("Fusion ready");
 });
 
