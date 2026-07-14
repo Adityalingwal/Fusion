@@ -44,6 +44,17 @@ export function setProjectDir(dir: string) {
   activeProject = null;
 }
 
+// Cross-process lifecycle: the identity endpoint lets a NEW launch (or `dashboard --stop`) prove a
+// port is OURS before touching it (the 38888+ range is shared with whatever else the user runs — a
+// foreign app must never be killed), and the shutdown endpoint is the only stop channel that works
+// on a server some OTHER session started. Both sit behind the same loopback bind + Host guard as
+// the rest of the API. The handler is injected by launch.ts (it owns the server object); when none
+// is set — e.g. handleRequest driven directly in tests — shutdown reports 503 instead of exiting.
+let shutdownHandler: (() => void) | null = null;
+export function setShutdownHandler(handler: (() => void) | null): void {
+  shutdownHandler = handler;
+}
+
 function db() {
   return storage.open();
 }
@@ -137,6 +148,19 @@ export async function handleRequest(req: Request): Promise<Response> {
   }
 
   const url = new URL(req.url);
+
+  if (url.pathname === "/api/fusion-dashboard" && req.method === "GET") {
+    return Response.json({ fusionDashboard: true });
+  }
+
+  if (url.pathname === "/api/shutdown" && req.method === "POST") {
+    if (!shutdownHandler) {
+      return Response.json({ error: "shutdown unavailable" }, { status: 503 });
+    }
+    // Fire AFTER this response is written, so the caller gets its confirmation before the exit.
+    setTimeout(shutdownHandler, 120);
+    return Response.json({ ok: true });
+  }
 
   if (url.pathname.startsWith("/dashboard/")) {
     return req.method === "GET"

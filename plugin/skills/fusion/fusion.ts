@@ -4,7 +4,7 @@
 
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
-import { launchDashboard } from "./dashboard";
+import { launchDashboard, stopRunningDashboard } from "./dashboard";
 import { preflightCodex } from "./lib/preflight";
 import * as storage from "./storage";
 
@@ -31,7 +31,7 @@ const OPTIONS_BY_COMMAND = {
   list: {},
   status: { "run-id": stringOption },
   abort: { "run-id": stringOption },
-  dashboard: { port: stringOption },
+  dashboard: { port: stringOption, stop: { type: "boolean" as const } },
 } as const;
 
 type Command = keyof typeof OPTIONS_BY_COMMAND;
@@ -235,6 +235,16 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       const port = rawPort === undefined ? undefined : Number(rawPort);
       if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) {
         throw new CliError("--port must be an integer between 1 and 65535", 2);
+      }
+      if (args.stop === true) {
+        // Stop whichever session's dashboard is running. No dashboard at all is a clean
+        // { stopped: false }; found-but-would-not-die is a real failure and must not read as ok.
+        const result = await stopRunningDashboard(port);
+        if (!result.stopped && result.port !== undefined) {
+          throw new CliError(`found a dashboard on port ${result.port} but could not stop it`);
+        }
+        writeJson({ ok: true, command, ...result });
+        return;
       }
       const { url } = await launchDashboard({ port, log: (line) => console.error(line) });
       writeJson({ ok: true, command, url });

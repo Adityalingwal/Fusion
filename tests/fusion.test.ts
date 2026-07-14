@@ -279,3 +279,20 @@ test("plugin-internal CLI rejects bad commands and SKILL.md uses only the cross-
   expect(skill).not.toMatch(/\$(HOME|PWD|RANDOM)\b|\$\(|\/dev\/null/);
   expect(skill).not.toMatch(/skills\/fusion\/(storage|runner|dashboard)\.ts/);
 });
+
+test("dashboard --stop with nothing running is a clean no-op through the CLI", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  // A quiet port range (no listener) — the command must answer stopped:false, exit 0, no error.
+  const result = await runBun(fusionPath, ["dashboard", "--stop", "--port", "39777"], {
+    cwd: root,
+    bin,
+    log,
+    env: { FUSION_DB: join(root, "fusion.db") },
+  });
+  expect(result.code).toBe(0);
+  const summary = json(result.stdout);
+  expect(summary.ok).toBe(true);
+  expect(summary.stopped).toBe(false);
+  expect(summary.port).toBeUndefined();
+});
