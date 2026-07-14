@@ -24,7 +24,7 @@ written into the project directory. Talk to it only through the bundled CLI
 - `list` — JSON of interrupted runs (status `running`) across all projects, newest first, each with which artifacts exist + any GPT drop reason. Powers RESUME.
 - `status --run-id <id>` — the same record for a single run (any status).
 - `abort --run-id <id>` — mark an interrupted run aborted (when the user gives up on it).
-- `dashboard` / `doctor` — run-history UI / diagnostics.
+- `dashboard` — run-history UI.
 
 > Every command prints JSON on stdout (progress/errors on stderr). A shell variable does
 > not survive into the next call — copy the exact `runId` string from `start` into each
@@ -47,12 +47,19 @@ whose leg it is.
 
 1. **Start the run — the preflight gate fires here.** Derive a concise title from the user's task, run
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" start --title "<concise task title>"`. **`start` verifies GPT
-   end-to-end BEFORE creating the run** (installed · logged in · exec flags · a real tiny model ping —
-   the ping is what catches a stale CLI or exhausted quota). Two outcomes:
-   - JSON `{ ok: false, stage: "preflight", reason, fix }` (non-zero exit) → **STOP.** No run was
-     created and no host tokens were spent. Show the user the `reason` and the `fix` plainly — lead with
-     the copy-paste command (e.g. `codex login`, `npm i -g @openai/codex@latest`). Fusion does not run
-     without a working GPT — period. There is no skip flag; fix it and re-run `/fusion`.
+   end-to-end BEFORE creating the run** (installed · logged in · a real tiny model ping — the ping is
+   what catches a stale CLI or exhausted quota). Two outcomes:
+   - JSON `{ ok: false, stage: "preflight", reason, fix }` (non-zero exit) → **STOP.** Show the user ONE
+     line, EXACTLY three parts and **nothing else** — **(1) what's broken → (2) the fix command/action →
+     (3) "then run /fusion again"** — rendered in the conversation's language. Do NOT add reassurance or
+     commentary ("nothing was spent", "the run never started"), raw JSON / exit codes, or any diagnostic
+     pointer. Map the `reason`/`fix` to the matching shape:
+     - not installed → "Codex isn't installed — install it: `npm i -g @openai/codex`, then `codex login`, then run /fusion again."
+     - not logged in → "Codex isn't logged in — run `codex login`, then run /fusion again."
+     - quota → "Your GPT usage limit is used up — wait for it to reset, then run /fusion again."
+     - stale CLI → "Your Codex CLI is out of date — run `npm i -g @openai/codex@latest`, then run /fusion again."
+     (Naming: **"GPT"** = the model (the quota case); **"Codex"** = the CLI tool (install / login / update).)
+     There is no skip flag — Fusion does not run without a working GPT.
    - JSON `{ ok: true, …, preflight: "ok", runId }` → copy the `runId`; it goes into every command below.
 
 2. **Orient — READ, don't solve.** Read the code needed to fill the brief's Context /
@@ -142,6 +149,10 @@ whose leg it is.
    - A Retry / Fix+Retry that drops AGAIN → re-present this menu with the fresh `reason`/`category`. The
      user decides each round — never auto-loop. **Single-model** routes to the Claude-only branch below
      (an explicit user choice, never a silent default).
+   - **A typed free-text reply outranks the listed buttons — do what they said.** If it names a fix or a
+     variation (e.g. "retry with a longer timeout"), apply it (e.g.
+     `relay --run-id <run-id> --timeout-ms <n>`); if it's ambiguous, ask ONE short clarifying question.
+     Never silently map a typed answer onto the nearest button.
 
    **If `codexAvailable: true`, run the critique — MAP the two legs; do NOT pick a winner yet.** Once
    your own leg is saved, read the Codex report:
@@ -205,18 +216,27 @@ whose leg it is.
    **Then save a durable draft to the DB**
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`.
 
-10. **Show the user → let them correct → finalize + save + finish.** **Lead with Council Health `2/2 Full`**
+10. **Show the user → Approve / Discard / correct → finalize.** **Lead with Council Health `2/2 Full`**
     (both legs synthesized). *(A `1/2` single-model result never reaches this step — it is finished via the
     Single-model branch below, under its own ⚠️ banner. Reaching step 10 means GPT's leg was present, so this is
-    always a real council.)* Then show: the synthesized plan, a
-    short "where they agreed / split", any **⚠️ User-Challenge** prominently, and the **advisor's verdict** (so
-    the user reviews *informed*). **The user reviews and may correct** — apply their edits to the temp file
-    (user edits are not re-reviewed; the user is the authority). On approval, **re-save the final plan to the
-    DB** (synchronous, overwrites the draft):
-    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`; then
-    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file** (do not delete).
-    Don't dump the raw reports — point to the dashboard (`fusion dashboard`); for a committed doc use
-    `fusion.ts export` (on demand).
+    always a real council.)* Then show: the synthesized plan, a short "where they agreed / split", and any
+    **⚠️ User-Challenge** prominently. **Advisor display rule** (the advisor's fixes were already folded into
+    the plan before this point, so its routine verdict is NOT shown): show the plan clean. Only two things ever
+    surface: if the advisor call **failed/timed out**, add one plain line ("the advisor check didn't run — this
+    plan is un-reviewed by it"); if an advisor catch **needs a user decision** (not a fix you could fold in),
+    surface it as a short note beside the plan. Never dump the routine verdict.
+    Then **ask via the question UI** — exactly two options + the built-in free-text box:
+    **[Approve — finalize the plan]** · **[Discard — drop this run]**.
+    - **Approve** → **re-save the final plan to the DB** (synchronous, overwrites the draft)
+      `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`, then
+      `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file** (do not delete).
+      Don't dump the raw reports — point to the dashboard (`fusion dashboard`); for a committed doc use
+      `fusion.ts export` (on demand).
+    - **Discard** → `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <run-id>` + a one-line confirmation
+      (this is what stops a rejected plan from lingering as `running` and haunting the resume picker).
+    - **Free-text = the corrections channel** (there is no separate "Correct" button — the box IS it). A typed
+      reply outranks the buttons: apply the user's edits to the temp file (NOT re-reviewed — the user is the
+      authority), show the updated plan, and re-ask this same menu. As many rounds as the user needs.
 
 ### Single-model (Claude-only) branch — an explicit user choice, never a default
 Reached ONLY when GPT dropped mid-run and the user chose "Single-model" over retry/resume at step 7's menu.
@@ -228,10 +248,18 @@ There is one leg, so critique + synthesis (steps 7–8) are meaningless and **SK
    verdict. Then save a durable draft:
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`.
 4. **Present under a loud banner:** `⚠️ Single-model plan — no council cross-check (GPT dropped: <reason>)`. Show
-   the plan + the advisor's verdict. No per-line `[unverified]` spam — the banner labels the whole plan as
-   single-model.
-5. **User corrects → save + finish:** re-save the final plan to the DB, then
-   `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file.**
+   the plan clean under the banner (no per-line `[unverified]` spam — the banner labels the whole plan as
+   single-model). **Advisor display rule (same as step 10):** the advisor's fixes are already folded in, so its
+   routine verdict is NOT shown; only surface a one-liner if the advisor call failed/timed out, or a short note
+   if an advisor catch needs a user decision.
+5. **Approve / Discard / correct — same menu as step 10.** Ask via the question UI: **[Approve — finalize the
+   plan]** · **[Discard — drop this run]** + the free-text box.
+   - **Approve** → re-save the final plan to the DB
+     `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`, then
+     `bun "${CLAUDE_SKILL_DIR}/fusion.ts" finish --run-id <run-id>`. **Keep the temp file.**
+   - **Discard** → `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <run-id>` + a one-line confirmation.
+   - **Free-text = corrections** (a typed reply outranks the buttons): apply the edits (not re-reviewed — the
+     user is the authority), show the updated plan, re-ask this menu. As many rounds as needed.
 
 ---
 
@@ -243,8 +271,11 @@ session itself died mid-run. Which artifacts exist in the DB tells you where it 
 
 1. **List interrupted runs.** `bun "${CLAUDE_SKILL_DIR}/fusion.ts" list` — JSON of every `running` run across all
    projects, newest first, each with title, when, `projectDir`, its `artifacts` map, and any GPT drop
-   `reason`/`category`. Show the candidates (title · when · what's missing) and let the user pick. (If they
-   already named a runId, skip to 2.)
+   `reason`/`category`. **Filter to the CURRENT project** (match `projectDir`) and show **ONLY the newest 3** as
+   options — each one line: title · when · why it stopped. **Nothing else:** no other-project counts, no
+   "N older runs exist" line, no extra lists. The question UI's built-in free-text box stays — a typed reply
+   outranks the listed options (e.g. the user pastes a specific runId or says "the auth one"); if it's
+   ambiguous, ask ONE short clarifying question. (If they already named a runId, skip to 2.)
 2. **Inspect the pick, then continue from the right point.**
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" status --run-id <id>` — read its `artifacts` map + any drop reason, then:
    - **no brief** → nothing worth resuming; suggest a fresh `/fusion` run instead.
