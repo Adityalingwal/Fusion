@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { pingTimeoutDetail, splitHint } from "../plugin/skills/fusion/lib/preflight";
 import { makeFakeBin, runBun } from "./helpers/fake-cli";
 import { useTempDirs } from "./helpers/temp";
 
@@ -57,6 +58,18 @@ test("preflight fails at the model ping on a quota error, with a human fix and n
   // D2: quota maps to a plain-English wait-and-retry fix, never a `fusion doctor` pointer.
   expect(r.failures[0].fix).toContain("usage limit is exhausted");
   expect(r.failures[0].fix).not.toMatch(/doctor/i);
+});
+
+// The ping timeout is a hardcoded 90s, so it can't be driven to fire in a unit test without a 90s
+// wait. Verify the exact reason/fix the timeout branch surfaces (production string builder → real
+// splitHint) directly: a specific "temporary, just retry" fix, NOT the circular generic fallback.
+test("a ping timeout yields a specific temporary/retry fix, not the generic 'Fix that' pointer", () => {
+  const { reason, fix } = splitHint(pingTimeoutDetail());
+  expect(reason).toContain("did not reply within");
+  expect(reason).toContain("90s");
+  expect(fix).toContain("temporary");
+  expect(fix).toContain("run /fusion again");
+  expect(fix).not.toBe("Fix that, then run /fusion again.");
 });
 
 test("preflight fails at the model ping when the CLI rejects a runner flag (stale CLI → update)", async () => {

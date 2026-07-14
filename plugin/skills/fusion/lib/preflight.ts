@@ -37,6 +37,18 @@ async function run(cmd: string[], timeoutMs = 15_000): Promise<{ code: number | 
   return { code: res.code, out: `${res.stdout}\n${res.stderr}`.trim() };
 }
 
+// The model ping's hard timeout. Named (not inline) so the timeout message below can't drift from it.
+const PING_TIMEOUT_MS = 90_000;
+
+// The exact detail a ping TIMEOUT surfaces. A timeout is usually temporary (slow network / busy
+// model), so give a concrete reason + a plain "just retry" fix instead of the generic splitHint
+// fallback. The `→` tail lets splitHint break it into {reason, fix}. Exported for tests: a 90s
+// hardcoded timeout can't be driven to fire in a unit test without a 90s wait, so the message
+// transformation is verified directly.
+export function pingTimeoutDetail(): string {
+  return `Codex did not reply within ${Math.round(PING_TIMEOUT_MS / 1000)}s → This is usually temporary (slow network or a busy model) — just run /fusion again.`;
+}
+
 function shortErr(text: string): string {
   const last = text.trim().split("\n").filter(Boolean).at(-1) || "no output";
   return last.length > 80 ? `${last.slice(0, 80)}…` : last;
@@ -52,7 +64,7 @@ function codexLoggedIn(output: string): boolean {
 // The ping detail already embeds its actionable fix as a "… → <fix>" tail (via actionableHint). Split
 // it back into {reason, fix} so the start gate can surface the fix as its own field. No arrow → no
 // recognized fix, so hand back a plain-English next step (never point at a diagnostic command).
-function splitHint(detail: string): { reason: string; fix: string } {
+export function splitHint(detail: string): { reason: string; fix: string } {
   const idx = detail.indexOf("→");
   if (idx === -1) return { reason: detail.trim(), fix: "Fix that, then run /fusion again." };
   return {
@@ -90,7 +102,7 @@ export async function preflightCodex(cwd: string): Promise<PreflightResult> {
   try {
     const ping = await runProc(["codex", ...buildCodexArgs(cwd, outPath)], {
       stdin: "Reply with the single word READY.",
-      timeoutMs: 90_000,
+      timeoutMs: PING_TIMEOUT_MS,
       cwd,
     });
     const out = await readFile(outPath, "utf8").catch(() => "");
@@ -102,7 +114,7 @@ export async function preflightCodex(cwd: string): Promise<PreflightResult> {
       // the "errors" are benign warnings, so show the actual reply instead.
       let detail: string;
       if (ping.timedOut) {
-        detail = "timed out";
+        detail = pingTimeoutDetail();
       } else if (ping.code !== 0) {
         const stdoutErr = extractCodexError(ping.stdout);
         const stderrTail = ping.stderr.trim() ? shortErr(ping.stderr) : null;
