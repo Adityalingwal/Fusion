@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// Single plugin-internal Fusion command surface. SKILL.md calls only this file; runner/storage/dashboard/
-// doctor remain internal implementation details that can move without changing the skill contract.
+// Single plugin-internal Fusion command surface. SKILL.md calls only this file; runner/storage/dashboard
+// remain internal implementation details that can move without changing the skill contract.
 
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
@@ -32,7 +32,6 @@ const OPTIONS_BY_COMMAND = {
   status: { "run-id": stringOption },
   abort: { "run-id": stringOption },
   dashboard: { port: stringOption },
-  doctor: {},
 } as const;
 
 type Command = keyof typeof OPTIONS_BY_COMMAND;
@@ -111,11 +110,7 @@ async function readInput(file: string | undefined): Promise<string> {
   return file ? await Bun.file(resolve(file)).text() : await Bun.stdin.text();
 }
 
-async function runInternal(
-  script: "runner.ts" | "doctor.ts",
-  args: string[],
-  options: { echoStdoutToStderr?: boolean } = {},
-): Promise<{ code: number; stdout: string }> {
+async function runInternal(script: "runner.ts", args: string[]): Promise<{ code: number; stdout: string }> {
   const proc = Bun.spawn([process.execPath, join(import.meta.dir, script), ...args], {
     cwd: process.cwd(),
     env: process.env,
@@ -124,7 +119,6 @@ async function runInternal(
     stderr: "inherit",
   });
   const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  if (options.echoStdoutToStderr && stdout) process.stderr.write(stdout);
   return { code, stdout };
 }
 
@@ -244,12 +238,6 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       }
       const { url } = await launchDashboard({ port, log: (line) => console.error(line) });
       writeJson({ ok: true, command, url });
-      return;
-    }
-    case "doctor": {
-      const result = await runInternal("doctor.ts", [], { echoStdoutToStderr: true });
-      if (result.code !== 0) throw new CliError(`doctor failed with exit code ${result.code}`);
-      writeJson({ ok: true, command });
       return;
     }
   }

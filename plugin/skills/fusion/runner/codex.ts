@@ -82,19 +82,27 @@ export function extractCodexError(stdout: string): string | null {
   return messages.length ? messages[messages.length - 1] : null;
 }
 
-// Map recognizable failures to an actionable one-liner, appended to the raw message. Most users never
-// run `fusion doctor` — they just run Fusion — so THIS run-time reason is the only place they see what
-// broke. Keep every branch a concrete copy-paste fix, not an ambiguous message. (No silent auto-install:
-// we surface the command, the user runs it.)
+// Map recognizable failures to an actionable one-liner, appended to the raw message. This run-time
+// reason is the only place the user sees what broke, so keep every branch a concrete copy-paste fix
+// or a plain next step, not an ambiguous message. (No silent auto-install: we surface the command,
+// the user runs it.) The `→ <fix>` tail is what lib/preflight.ts splits back into its `fix` field.
 export function actionableHint(message: string): string {
+  // Out of credits / usage cap / rate-limited (429). Retrying now would just fail again — the model
+  // quota has to reset first, so the "fix" is to wait, not a command. (Named "GPT" — it's the model,
+  // not the CLI tool.)
+  if (/insufficient credit|usage limit|quota|\b429\b|too many requests/i.test(message)) {
+    return `${message}\n  → Your GPT usage limit is exhausted — wait for it to reset, then run /fusion again.`;
+  }
   // Codex not installed / not on PATH (spawn ENOENT). Only the npm global CLI is usable — the
   // ChatGPT-app binary isn't on PATH — so the fix is always the global install + login.
   if (/executable not found|not found in \$?path|\benoent\b|no such file/i.test(message)) {
     return `${message}\n  → Codex isn't installed (or not on PATH). Install it: npm i -g @openai/codex — then run: codex login`;
   }
-  // Stale PATH `codex` that predates a newly-configured model → "requires a newer version of Codex".
-  if (/newer version of codex|requires a newer version|upgrade the cli/i.test(message)) {
-    return `${message}\n  → Your codex CLI looks stale. Fix: npm i -g @openai/codex@latest`;
+  // Stale PATH `codex`: it either announces "requires a newer version", or its argv parser rejects a
+  // flag the runner passes ("unexpected argument" / "unrecognized option") because the installed CLI
+  // predates it — both mean the same fix: update the CLI.
+  if (/newer version of codex|requires a newer version|upgrade the cli|unexpected argument|unrecognized option/i.test(message)) {
+    return `${message}\n  → Your codex CLI is incompatible/stale. Fix: npm i -g @openai/codex@latest`;
   }
   // Present but unauthenticated (kept distinct from a 400 credits/quota error, which is self-explanatory).
   if (/not logged in|not authenticated|unauthorized|\b401\b/i.test(message)) {
@@ -103,20 +111,13 @@ export function actionableHint(message: string): string {
   return message;
 }
 
-// Single source of truth for the `codex exec` flags the runner relies on. doctor asserts the installed
-// codex still exposes EXACTLY these, and the runner builds its argv from the same builder — so a flag
-// the doctor green-lights is precisely a flag the runner uses (no long-vs-short drift).
-export const CODEX_REQUIRED_FLAGS = ["-C", "-o", "--sandbox", "--json", "--ephemeral", "--skip-git-repo-check"] as const;
-
 // Model + reasoning effort are NOT set here. We deliberately pass no `-m` (and no effort override), so
 // codex falls back to the user's own `~/.codex/config.toml` — the single place they already configure
 // which model / effort their subscription uses. Fusion respects that instead of pinning its own copy.
 //
 // `-c tools.web_search=true` gives the Codex leg the native `web_search` tool so it CAN look things up
 // on the live web when the brief warrants it (docs, versions, external facts the repo can't answer). Codex
-// decides per-run whether to actually search — it stays offline when the task is self-contained. This is a
-// config-value override, NOT a bare flag, so its key can't be verified via `codex exec --help`; that's why
-// it is intentionally absent from CODEX_REQUIRED_FLAGS (which tracks only help-verifiable structural flags).
+// decides per-run whether to actually search — it stays offline when the task is self-contained.
 // Verified: `--search` is top-level-only (rejected by `codex exec`); `-c tools.web_search=true` is the
 // exec-compatible form, and it works under `--sandbox read-only` (web_search is model-native, not a shell op).
 export function buildCodexArgs(projectDir: string, outPath: string): string[] {

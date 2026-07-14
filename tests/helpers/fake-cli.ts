@@ -33,15 +33,6 @@ if (args[0] === "login" && args[1] === "status") {
   console.log(process.env.FAKE_CODEX_STATUS || "Logged in using ChatGPT");
   process.exit(0);
 }
-if (args[0] === "exec" && args.includes("--help")) {
-  if (process.env.FAKE_CODEX_HELP === "missing-flags") {
-    console.log("codex exec --model");
-  } else {
-    // Mirror real codex help: each flag listed with both short + long form.
-    console.log("-m, --model -C, --cd -s, --sandbox -o, --output-last-message --json --ephemeral --skip-git-repo-check");
-  }
-  process.exit(0);
-}
 if (args[0] === "exec") {
   const stdin = await record();
   // Simulate a real codex failure: it reports the cause as a JSON error event on STDOUT (stderr stays

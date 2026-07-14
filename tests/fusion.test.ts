@@ -152,7 +152,8 @@ test("start gate: a failing preflight refuses to create a run and returns the re
   for (const [label, env] of [
     ["not-installed", { FAKE_CODEX_VERSION_FAIL: "1" }],
     ["not-logged-in", { FAKE_CODEX_STATUS: "not logged in" }],
-    ["stale-flags", { FAKE_CODEX_HELP: "missing-flags" }],
+    // Stale CLI is now caught by the ping itself (its argv is rejected) — there is no separate flags check.
+    ["stale-cli", { FAKE_CODEX_EXIT: "1", FAKE_CODEX_ERROR: "unexpected argument '--ephemeral' found" }],
     ["model-ping-fails", { FAKE_CODEX_EXIT: "1", FAKE_CODEX_ERROR: "insufficient credits" }],
   ] as const) {
     const dbFile = join(root, `gate-${label}.db`);
@@ -174,16 +175,6 @@ test("start gate: a failing preflight refuses to create a run and returns the re
     const count = (storage.open().query("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n;
     expect(count).toBe(0);
   }
-});
-
-test("doctor keeps diagnostics on stderr and JSON on stdout", async () => {
-  const root = await makeTempDir();
-  const { bin, log } = await makeFakeBin(root);
-  const result = await runBun(fusionPath, ["doctor"], { cwd: root, bin, log });
-
-  expect(result.code).toBe(0);
-  expect(json(result.stdout)).toEqual({ ok: true, command: "doctor" });
-  expect(result.stderr).toContain("Fusion ready");
 });
 
 test("blind rule: get/export codex_report refuse until claude_report is saved, then succeed", async () => {
@@ -286,5 +277,5 @@ test("plugin-internal CLI rejects bad commands and SKILL.md uses only the cross-
   const skill = await readFile(join(fusionRoot, "SKILL.md"), "utf8");
   expect(skill).toContain("${CLAUDE_SKILL_DIR}/fusion.ts");
   expect(skill).not.toMatch(/\$(HOME|PWD|RANDOM)\b|\$\(|\/dev\/null/);
-  expect(skill).not.toMatch(/skills\/fusion\/(storage|runner|dashboard|doctor)\.ts/);
+  expect(skill).not.toMatch(/skills\/fusion\/(storage|runner|dashboard)\.ts/);
 });

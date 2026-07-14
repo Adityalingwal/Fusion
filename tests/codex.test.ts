@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { classifyCodexFailure } from "../plugin/skills/fusion/runner/codex";
+import { actionableHint, classifyCodexFailure } from "../plugin/skills/fusion/runner/codex";
 
 // classifyCodexFailure is pure string → category, so it is tested directly against the reason
 // strings runner/codex.ts actually produces (extractCodexError / actionableHint / timeout / spawn).
@@ -33,4 +33,25 @@ test("classifyCodexFailure buckets each recognizable Codex drop reason", () => {
 
 test("classifyCodexFailure checks quota before the generic transient bucket (a 429 is quota, not transient)", () => {
   expect(classifyCodexFailure("codex exited 1: 429 too many requests on a flaky connection")).toBe("quota");
+});
+
+// actionableHint appends the copy-paste fix the user actually sees (and lib/preflight splits its `→`
+// tail into the gate's `fix` field), so its pattern mapping is the load-bearing bit — test it directly.
+test("actionableHint maps quota/limit reasons to the human GPT-limit fix, never a doctor pointer", () => {
+  for (const msg of [
+    "[429] insufficient credits for the requested model",
+    "usage limit reached",
+    "quota exhausted",
+    "429 too many requests",
+  ]) {
+    const hint = actionableHint(msg);
+    expect(hint).toContain("Your GPT usage limit is exhausted");
+    expect(hint).not.toMatch(/doctor/i);
+  }
+});
+
+test("actionableHint maps an unexpected-argument / unrecognized-option error to a CLI update", () => {
+  for (const msg of ["error: unexpected argument '--ephemeral' found", "unrecognized option '--json'"]) {
+    expect(actionableHint(msg)).toContain("npm i -g @openai/codex@latest");
+  }
 });
