@@ -4,6 +4,32 @@ Notable changes to Fusion will be documented here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-07-14
+
+Sharper failure messages and a cleaner review-and-finish flow, building on
+the 0.2.0 preflight gate.
+
+### Changed
+- **Plain-English failure messages.** When GPT can't run, Fusion now shows one
+  clear line — what's wrong, the exact fix, and "then run /fusion again" — with
+  no jargon, exit codes, or diagnostic-command pointers. Out of credits reads
+  "wait for it to reset"; an out-of-date CLI reads "run the update command".
+- **Your typed answer always wins.** At every choice Fusion offers (a mid-run
+  drop, the resume list, the final approve step), typing your own reply now
+  takes priority over the listed buttons instead of being mapped to the
+  closest one.
+- **Approve or discard at the end.** After the plan is shown you choose Approve
+  (finalize) or Discard (drop the run so it's cleaned up, not left dangling);
+  typing corrections revises the plan and re-asks. The internal reviewer check
+  runs quietly — you only hear about it if it couldn't run or needs your call.
+- **Tidier resume list.** `/fusion resume` shows only the current project's
+  three most recent unfinished runs, nothing else.
+
+### Removed
+- **The `doctor` command.** Its checks are exactly what `/fusion` already runs
+  before every plan, so it was redundant. The separate exec-flags check is gone
+  too — an incompatible CLI is now caught by the real model ping itself.
+
 ## [0.2.0] — 2026-07-14
 
 Fusion now guarantees a real two-model council or tells you exactly why it can't —
