@@ -195,6 +195,46 @@ test("deleteRun removes the run and its embedded content", async () => {
   expect(storage.deleteRun(db, "missing")).toBe(false);
 });
 
+test("abortRun aborts a running run but refuses completed and already-aborted runs", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "run", projectId: "p1" });
+  storage.startRun(db, { runId: "done", projectId: "p1" });
+  storage.finishRun(db, "done");
+
+  storage.abortRun(db, "run");
+  expect(storage.getRunDetails(db, "run").status).toBe("aborted");
+  expect(() => storage.abortRun(db, "run")).toThrow("already aborted");
+  expect(() => storage.abortRun(db, "done")).toThrow("cannot abort a completed run");
+  expect(() => storage.abortRun(db, "ghost")).toThrow("run not found");
+});
+
+test("getIncompleteRuns lists only running runs newest-first with artifact presence and drop reason", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/repo/proj" });
+  storage.startRun(db, { runId: "old", projectId: "p1", title: "Old run" });
+  storage.startRun(db, { runId: "new", projectId: "p1", title: "New run" });
+  storage.startRun(db, { runId: "done", projectId: "p1", title: "Done run" });
+  db.query(`UPDATE runs SET created_at = ? WHERE id = ?`).run("2026-01-01T00:00:00.000Z", "old");
+  db.query(`UPDATE runs SET created_at = ? WHERE id = ?`).run("2026-01-02T00:00:00.000Z", "new");
+  storage.finishRun(db, "done"); // completed → excluded from the incomplete list
+  storage.putArtifact(db, "new", "brief", "the brief");
+  storage.putArtifact(db, "new", "claude_report", "my leg");
+  storage.recordCodexFailure(db, "new", "429 too many requests", "quota");
+
+  const incomplete = storage.getIncompleteRuns(db);
+  expect(incomplete.map((r) => r.runId)).toEqual(["new", "old"]); // newest first, no completed run
+  const newRun = incomplete[0];
+  expect(newRun.projectDir).toBe("/repo/proj");
+  expect(newRun.artifacts).toEqual({ brief: true, claudeReport: true, codexReport: false, plan: false });
+  expect(newRun.codexFailReason).toContain("429");
+  expect(newRun.codexFailCategory).toBe("quota");
+
+  // getRunStatusRecord returns any status (incl. completed) and null for an unknown id.
+  expect(storage.getRunStatusRecord(db, "done")?.status).toBe("completed");
+  expect(storage.getRunStatusRecord(db, "ghost")).toBeNull();
+});
+
 test("cold-start: concurrent opens don't crash or lose writes (busy_timeout ordering)", async () => {
   // Regression guard for the WAL/busy_timeout ordering bug: if busy_timeout is set AFTER
   // journal_mode=WAL, concurrent cold-start opens hit SQLITE_BUSY and lose writes. Each worker is a

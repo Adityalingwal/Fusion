@@ -28,6 +28,9 @@ const OPTIONS_BY_COMMAND = {
   },
   finish: { "run-id": stringOption },
   export: { "run-id": stringOption, type: stringOption, out: stringOption },
+  list: {},
+  status: { "run-id": stringOption },
+  abort: { "run-id": stringOption },
   dashboard: { port: stringOption },
   doctor: {},
 } as const;
@@ -86,6 +89,22 @@ function generatedRunId(): string {
 
 function ensureRunExists(db: ReturnType<typeof storage.open>, runId: string): void {
   if (storage.getRunProjectId(db, runId) === null) throw new CliError(`run not found: ${runId}`);
+}
+
+// The blind rule, enforced in code (the "taala"). `get`/`export` of the codex_report REFUSE until a
+// claude_report exists for that run — the host must write its own leg first so the two legs stay
+// independent. No --force override; the SKILL.md prose warning stays as belt-and-suspenders.
+function assertBlindRuleSatisfied(
+  db: ReturnType<typeof storage.open>,
+  runId: string,
+  type: storage.ArtifactType,
+): void {
+  if (type !== "codex_report") return;
+  if (storage.getArtifact(db, runId, "claude_report") === null) {
+    throw new CliError(
+      "blind rule: save your claude_report first — Fusion refuses to reveal the codex_report until your own leg is written (independence is the whole point).",
+    );
+  }
 }
 
 async function readInput(file: string | undefined): Promise<string> {
@@ -155,7 +174,9 @@ async function execute(command: Command, args: CliValues): Promise<void> {
     case "get": {
       const runId = requiredString(args, "run-id");
       const type = requiredArtifactType(args);
-      const content = storage.getArtifact(storage.open(), runId, type);
+      const db = storage.open();
+      assertBlindRuleSatisfied(db, runId, type);
+      const content = storage.getArtifact(db, runId, type);
       if (content === null) throw new CliError(`content not found: ${runId}/${type}`);
       writeJson({ ok: true, command, runId, type, content });
       return;
@@ -184,10 +205,35 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       const runId = requiredString(args, "run-id");
       const type = requiredArtifactType(args);
       const out = resolve(requiredString(args, "out"));
-      const content = storage.getArtifact(storage.open(), runId, type);
+      const db = storage.open();
+      assertBlindRuleSatisfied(db, runId, type);
+      const content = storage.getArtifact(db, runId, type);
       if (content === null) throw new CliError(`content not found: ${runId}/${type}`);
       await Bun.write(out, content);
       writeJson({ ok: true, command, runId, type, out });
+      return;
+    }
+    case "list": {
+      const runs = storage.getIncompleteRuns(storage.open());
+      writeJson({ ok: true, command, runs });
+      return;
+    }
+    case "status": {
+      const runId = requiredString(args, "run-id");
+      const run = storage.getRunStatusRecord(storage.open(), runId);
+      if (run === null) throw new CliError(`run not found: ${runId}`);
+      writeJson({ ok: true, command, run });
+      return;
+    }
+    case "abort": {
+      const runId = requiredString(args, "run-id");
+      const db = storage.open();
+      try {
+        storage.abortRun(db, runId);
+      } catch (error) {
+        throw new CliError(error instanceof Error ? error.message : String(error));
+      }
+      writeJson({ ok: true, command, runId, status: "aborted" });
       return;
     }
     case "dashboard": {

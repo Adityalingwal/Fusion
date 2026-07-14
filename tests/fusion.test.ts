@@ -186,6 +186,85 @@ test("doctor keeps diagnostics on stderr and JSON on stdout", async () => {
   expect(result.stderr).toContain("Fusion ready");
 });
 
+test("blind rule: get/export codex_report refuse until claude_report is saved, then succeed", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "blind.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  // Seed a run that already has a codex_report but NOT a claude_report (the exact ordering the rule guards).
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "blind", projectId: proj.id });
+  storage.putArtifact(db, "blind", "codex_report", "codex leg content");
+
+  // get refuses.
+  const blockedGet = await runBun(fusionPath, ["get", "--run-id", "blind", "--type", "codex_report"], common);
+  expect(blockedGet.code).not.toBe(0);
+  expect(blockedGet.stdout).toBe("");
+  expect(blockedGet.stderr).toContain("blind rule");
+
+  // export refuses too (same guard, so a plan can't be smuggled out to disk either).
+  const blockedExport = await runBun(
+    fusionPath,
+    ["export", "--run-id", "blind", "--type", "codex_report", "--out", join(project, "leak.md")],
+    common,
+  );
+  expect(blockedExport.code).not.toBe(0);
+  expect(blockedExport.stderr).toContain("blind rule");
+
+  // Save the host's own leg → the guard clears.
+  storage.putArtifact(db, "blind", "claude_report", "my own leg");
+  const allowedGet = await runBun(fusionPath, ["get", "--run-id", "blind", "--type", "codex_report"], common);
+  expect(allowedGet.code).toBe(0);
+  expect(json(allowedGet.stdout).content).toBe("codex leg content");
+});
+
+test("list/status/abort power the resume flow", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "resume.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "resumable", projectId: proj.id, title: "Interrupted run" });
+  storage.putArtifact(db, "resumable", "brief", "the brief");
+
+  // list shows the incomplete run with its artifact map.
+  const list = await runBun(fusionPath, ["list"], common);
+  expect(list.code).toBe(0);
+  const runs = json(list.stdout).runs;
+  expect(runs).toHaveLength(1);
+  expect(runs[0].runId).toBe("resumable");
+  expect(runs[0].artifacts).toEqual({ brief: true, claudeReport: false, codexReport: false, plan: false });
+
+  // status returns the same shape for one run.
+  const status = await runBun(fusionPath, ["status", "--run-id", "resumable"], common);
+  expect(status.code).toBe(0);
+  expect(json(status.stdout).run.status).toBe("running");
+
+  // abort marks it aborted; it then drops out of the incomplete list.
+  const abort = await runBun(fusionPath, ["abort", "--run-id", "resumable"], common);
+  expect(abort.code).toBe(0);
+  expect(json(abort.stdout).status).toBe("aborted");
+  expect(json((await runBun(fusionPath, ["list"], common)).stdout).runs).toHaveLength(0);
+
+  // aborting again errors politely (non-zero); status still reads it back as aborted.
+  const reabort = await runBun(fusionPath, ["abort", "--run-id", "resumable"], common);
+  expect(reabort.code).not.toBe(0);
+  expect(reabort.stderr).toContain("already aborted");
+  expect(json((await runBun(fusionPath, ["status", "--run-id", "resumable"], common)).stdout).run.status).toBe("aborted");
+});
+
 test("plugin-internal CLI rejects bad commands and SKILL.md uses only the cross-platform entrypoint", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);

@@ -212,6 +212,100 @@ export function deleteRun(db: Database, runId: string): boolean {
   return res.changes > 0;
 }
 
+// Mark a run aborted (a new terminal status distinct from completed). A completed run must NOT be
+// abortable, and re-aborting is a polite error — the caller (fusion.ts abort) surfaces both as a
+// non-zero exit. Used by the resume flow when the user gives up on an interrupted run.
+export function abortRun(db: Database, runId: string): void {
+  const row = db.query(`SELECT status FROM runs WHERE id = ?`).get(runId) as { status: string } | undefined;
+  if (!row) throw new Error(`run not found: ${runId}`);
+  if (row.status === "completed") throw new Error(`cannot abort a completed run: ${runId}`);
+  if (row.status === "aborted") throw new Error(`run already aborted: ${runId}`);
+  db.query(`UPDATE runs SET status = 'aborted' WHERE id = ?`).run(runId);
+}
+
+// Which artifacts a run has, plus its recorded Codex drop — everything the resume flow (list/status)
+// needs to decide where a run stopped and what to do next, WITHOUT loading multi-KB artifact bodies.
+export interface RunStatusRecord {
+  runId: string;
+  title: string;
+  projectId: string;
+  projectDir: string; // the project's root path — tells the user WHICH project a resumable run belongs to
+  status: string;
+  createdAt: string;
+  artifacts: { brief: boolean; claudeReport: boolean; codexReport: boolean; plan: boolean };
+  codexFailReason: string | null;
+  codexFailCategory: string | null;
+}
+
+interface RunStatusRow {
+  id: string;
+  title: string;
+  project_id: string;
+  root_path: string | null;
+  status: string;
+  created_at: string;
+  has_brief: number;
+  has_claude: number;
+  has_codex: number;
+  has_plan: number;
+  codex_fail_reason: string | null;
+  codex_fail_category: string | null;
+}
+
+const RUN_STATUS_COLUMNS = `
+  r.id, r.title, r.project_id, r.status, r.created_at,
+  r.codex_fail_reason, r.codex_fail_category, p.root_path,
+  (r.brief IS NOT NULL)         AS has_brief,
+  (r.claude_report IS NOT NULL) AS has_claude,
+  (r.codex_report IS NOT NULL)  AS has_codex,
+  (r.plan IS NOT NULL)          AS has_plan`;
+
+function toRunStatusRecord(row: RunStatusRow): RunStatusRecord {
+  return {
+    runId: row.id,
+    title: row.title,
+    projectId: row.project_id,
+    projectDir: row.root_path ?? "",
+    status: row.status,
+    createdAt: row.created_at,
+    artifacts: {
+      brief: row.has_brief === 1,
+      claudeReport: row.has_claude === 1,
+      codexReport: row.has_codex === 1,
+      plan: row.has_plan === 1,
+    },
+    codexFailReason: row.codex_fail_reason,
+    codexFailCategory: row.codex_fail_category,
+  };
+}
+
+// Every still-running (incomplete) run across ALL projects, newest first. Powers `fusion list` /
+// RESUME mode: a run interrupted in one session can be found and continued in any later session, and
+// the artifact-presence flags tell the skill exactly where it stopped.
+export function getIncompleteRuns(db: Database): RunStatusRecord[] {
+  const rows = db
+    .query(
+      `SELECT ${RUN_STATUS_COLUMNS}
+       FROM runs r LEFT JOIN projects p ON p.id = r.project_id
+       WHERE r.status = 'running'
+       ORDER BY r.created_at DESC`,
+    )
+    .all() as RunStatusRow[];
+  return rows.map(toRunStatusRecord);
+}
+
+// The same status record for ONE run, any status. Powers `fusion status --run-id`. Null if unknown.
+export function getRunStatusRecord(db: Database, runId: string): RunStatusRecord | null {
+  const row = db
+    .query(
+      `SELECT ${RUN_STATUS_COLUMNS}
+       FROM runs r LEFT JOIN projects p ON p.id = r.project_id
+       WHERE r.id = ?`,
+    )
+    .get(runId) as RunStatusRow | undefined;
+  return row ? toRunStatusRecord(row) : null;
+}
+
 // Direct PK lookup for an ownership check — avoids scanning + JSON-parsing every run just to test
 // whether one id belongs to a project. Returns null if the run doesn't exist.
 export function getRunProjectId(db: Database, runId: string): string | null {
