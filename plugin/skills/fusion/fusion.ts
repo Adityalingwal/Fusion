@@ -161,6 +161,12 @@ async function execute(command: Command, args: CliValues): Promise<void> {
       const db = storage.open();
       ensureRunExists(db, runId);
       const content = await readInput(optionalString(args, "file"));
+      // Refuse empty/whitespace-only content: an empty string is non-NULL, so storing it would wrongly
+      // satisfy the blind-rule gate and make resume/status report the artifact as present. Nothing is
+      // written — the host must write the real content to the file, then re-run put.
+      if (content.trim() === "") {
+        throw new CliError(`refusing to store empty content for ${type} — write the real content to the file first, then re-run put`);
+      }
       storage.putArtifact(db, runId, type, content);
       writeJson({ ok: true, command, runId, type, bytes: new TextEncoder().encode(content).byteLength });
       return;

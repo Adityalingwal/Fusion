@@ -215,6 +215,40 @@ test("blind rule: get/export codex_report refuse until claude_report is saved, t
   expect(json(allowedGet.stdout).content).toBe("codex leg content");
 });
 
+test("put refuses empty/whitespace-only content and stores nothing", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "empty-put.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "empty", projectId: proj.id });
+  // A real codex_report exists, so ONLY the empty claude_report put (rejected below) stands between
+  // the host and reading it — proving nothing was stored keeps the blind gate shut.
+  storage.putArtifact(db, "empty", "codex_report", "codex leg content");
+
+  const whitespaceFile = join(root, "whitespace.md");
+  await writeFile(whitespaceFile, "   \n\t  \n", "utf8");
+  const put = await runBun(
+    fusionPath,
+    ["put", "--run-id", "empty", "--type", "claude_report", "--file", whitespaceFile],
+    common,
+  );
+  expect(put.code).not.toBe(0);
+  expect(put.stdout).toBe("");
+  expect(put.stderr).toContain("refusing to store empty content");
+
+  // Nothing was stored → the blind rule still refuses to reveal the codex_report.
+  const blockedGet = await runBun(fusionPath, ["get", "--run-id", "empty", "--type", "codex_report"], common);
+  expect(blockedGet.code).not.toBe(0);
+  expect(blockedGet.stderr).toContain("blind rule");
+});
+
 test("list/status/abort power the resume flow", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);
