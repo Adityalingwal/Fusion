@@ -121,6 +121,61 @@ test("plugin-internal relay delegates to the runner and returns a minimal summar
   expect(logs.some((entry) => entry.tool === "codex" && entry.args[0] === "exec")).toBe(true);
 });
 
+test("start gate: a passing preflight creates the run and marks preflight ok", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "gate-pass.db");
+  await mkdir(project, { recursive: true });
+
+  const start = await runBun(fusionPath, ["start", "--run-id", "gated", "--project-dir", project, "--title", "Gated plan"], {
+    cwd: project,
+    bin,
+    log,
+    env: { FUSION_DB: dbFile },
+  });
+  expect(start.code).toBe(0);
+  const started = json(start.stdout);
+  expect(started.ok).toBe(true);
+  expect(started.preflight).toBe("ok");
+
+  process.env.FUSION_DB = dbFile;
+  expect(storage.getRunDetails(storage.open(), "gated").title).toBe("Gated plan");
+});
+
+test("start gate: a failing preflight refuses to create a run and returns the reason + fix", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+
+  for (const [label, env] of [
+    ["not-installed", { FAKE_CODEX_VERSION_FAIL: "1" }],
+    ["not-logged-in", { FAKE_CODEX_STATUS: "not logged in" }],
+    ["stale-flags", { FAKE_CODEX_HELP: "missing-flags" }],
+    ["model-ping-fails", { FAKE_CODEX_EXIT: "1", FAKE_CODEX_ERROR: "insufficient credits" }],
+  ] as const) {
+    const dbFile = join(root, `gate-${label}.db`);
+    const start = await runBun(fusionPath, ["start", "--run-id", "should-not-exist", "--project-dir", project], {
+      cwd: project,
+      bin,
+      log,
+      env: { ...env, FUSION_DB: dbFile },
+    });
+    expect(start.code).not.toBe(0); // non-zero exit
+    const failed = json(start.stdout);
+    expect(failed.ok).toBe(false);
+    expect(failed.stage).toBe("preflight");
+    expect(typeof failed.reason).toBe("string");
+    expect(failed.fix.length).toBeGreaterThan(0);
+
+    // The whole point of the gate: NO run row (and no side effects) when preflight fails.
+    process.env.FUSION_DB = dbFile;
+    const count = (storage.open().query("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n;
+    expect(count).toBe(0);
+  }
+});
+
 test("doctor keeps diagnostics on stderr and JSON on stdout", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);

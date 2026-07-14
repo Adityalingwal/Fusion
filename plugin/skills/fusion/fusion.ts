@@ -5,6 +5,7 @@
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { launchDashboard } from "./dashboard";
+import { preflightCodex } from "./lib/preflight";
 import * as storage from "./storage";
 
 type CliValue = string | boolean | undefined;
@@ -121,13 +122,24 @@ function lastJsonObject(text: string): Record<string, unknown> {
 async function execute(command: Command, args: CliValues): Promise<void> {
   switch (command) {
     case "start": {
-      const runId = optionalString(args, "run-id") ?? generatedRunId();
       const projectDir = resolve(optionalString(args, "project-dir") ?? process.cwd());
+      // Fail-fast gate: verify Codex end-to-end (install → login → exec flags → real model ping)
+      // BEFORE creating any run row. A broken Codex would otherwise degrade Fusion to a pointless
+      // single-model plan only AFTER most host tokens are spent — so refuse here, create nothing, and
+      // hand back the reason + copy-paste fix. No skip flag, no env escape hatch.
+      const pre = await preflightCodex(projectDir);
+      if (!pre.ok) {
+        const failure = pre.failures[0];
+        writeJson({ ok: false, command, stage: "preflight", reason: failure.reason, fix: failure.fix });
+        process.exitCode = 1; // natural non-zero exit; stdout above is fully flushed first
+        return;
+      }
+      const runId = optionalString(args, "run-id") ?? generatedRunId();
       const db = storage.open();
       const project = await storage.resolveProject(projectDir);
       storage.ensureProject(db, project);
       storage.startRun(db, { runId, projectId: project.id, title: optionalString(args, "title") });
-      writeJson({ ok: true, command, runId, projectId: project.id, projectDir: project.root });
+      writeJson({ ok: true, command, runId, projectId: project.id, projectDir: project.root, preflight: "ok" });
       return;
     }
     case "put": {
