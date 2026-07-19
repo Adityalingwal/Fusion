@@ -1,12 +1,15 @@
 ---
 name: fusion
-description: Create and finalize an implementation plan through a blind Codex-hosted, Claude-provider council. Use when the user invokes Fusion, asks for a dual-model plan, wants Codex and Claude to independently analyze a repository task, or wants to resume or inspect a local Fusion planning run.
+description: Create and finalize an implementation plan through a blind Codex-hosted, Claude-provider council. Use ONLY when the user themselves directly asks to run Fusion in this session — an explicit "/fusion", "run fusion", "start a fusion run", or a direct request to resume/inspect one of their local Fusion runs. Do NOT use just because Fusion is the SUBJECT of a task, brief, or prompt relayed by another tool or session (e.g. a planning brief about the Fusion codebase): in that case you are a provider leg, not the host — answer the brief directly instead.
 ---
 
 # Fusion
 
 Create one implementation plan from two independent reports. Act as the Codex host; invoke Claude
 Code as the external provider. Keep the two reports blind until the Codex report is saved.
+
+**Role guard:** if this arrives as part of a brief asking you to WRITE a planning report, you are a
+provider leg, not the host — do not run this workflow; just write the report the brief asks for.
 
 ## Runtime
 
