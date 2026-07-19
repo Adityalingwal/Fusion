@@ -86,3 +86,40 @@ test("preflight fails at the model ping when the CLI rejects a runner flag (stal
   expect(r.failures[0].check).toBe("ping");
   expect(r.failures[0].fix).toContain("@openai/codex@latest");
 });
+
+test("Claude preflight passes install, JSON auth, and the real print-mode READY ping", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const res = await runBun(probePath, ["claude"], { cwd: root, bin, log });
+  expect(probe(res.stdout)).toEqual({ ok: true, failures: [] });
+});
+
+test("Claude preflight short-circuits on install and auth failures", async () => {
+  for (const [env, check] of [
+    [{ FAKE_CLAUDE_VERSION_FAIL: "1" }, "install"],
+    [{ FAKE_CLAUDE_LOGGED_IN: "false" }, "login"],
+  ] as const) {
+    const root = await tempDir();
+    const { bin, log } = await makeFakeBin(root);
+    const res = await runBun(probePath, ["claude"], { cwd: root, bin, log, env });
+    const result = probe(res.stdout);
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].check).toBe(check);
+    expect(result.failures[0].fix).toContain(check === "login" ? "claude auth login" : "Install Claude Code");
+  }
+});
+
+test("Claude preflight surfaces real ping failure with an actionable login fix", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const res = await runBun(probePath, ["claude"], {
+    cwd: root,
+    bin,
+    log,
+    env: { FAKE_CLAUDE_EXIT: "1", FAKE_CLAUDE_STDERR: "not authenticated" },
+  });
+  const result = probe(res.stdout);
+  expect(result.ok).toBe(false);
+  expect(result.failures[0]).toMatchObject({ check: "ping", fix: "Run: claude auth login" });
+});

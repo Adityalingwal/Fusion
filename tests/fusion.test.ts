@@ -121,6 +121,38 @@ test("plugin-internal relay delegates to the runner and returns a minimal summar
   expect(logs.some((entry) => entry.tool === "codex" && entry.args[0] === "exec")).toBe(true);
 });
 
+test("relay resumes in the run's stored project and rejects an explicit different project", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const projectA = join(root, "project-a");
+  const projectB = join(root, "project-b");
+  const dbFile = join(root, "stored-project.db");
+  await mkdir(projectA, { recursive: true });
+  await mkdir(projectB, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const projA = await storage.resolveProject(projectA);
+  storage.ensureProject(db, projA);
+  storage.startRun(db, { runId: "stored-project", projectId: projA.id, hostModel: "codex" });
+  storage.putArtifact(db, "stored-project", "brief", "resume in project A");
+  const common = { cwd: projectB, bin, log, env: { FUSION_DB: dbFile, FAKE_CLAUDE_OUTPUT: "claude from A" } };
+
+  const resumed = await runBun(fusionPath, ["relay", "--run-id", "stored-project"], common);
+  expect(resumed.code).toBe(0);
+  const claudeInvocation = (await readLogs(log)).find((entry) => entry.tool === "claude")!;
+  expect(claudeInvocation.cwd).toBe(await realpath(projectA));
+
+  const rejected = await runBun(
+    fusionPath,
+    ["relay", "--run-id", "stored-project", "--project-dir", projectB],
+    common,
+  );
+  expect(rejected.code).not.toBe(0);
+  expect(rejected.stderr).toContain("project mismatch");
+  expect((await readLogs(log)).filter((entry) => entry.tool === "claude")).toHaveLength(1);
+});
+
 test("relay surfaces the runner's failure receipt to the host instead of a bare exit code", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);
@@ -238,6 +270,154 @@ test("blind rule: get/export codex_report refuse until claude_report is saved, t
   const allowedGet = await runBun(fusionPath, ["get", "--run-id", "blind", "--type", "codex_report"], common);
   expect(allowedGet.code).toBe(0);
   expect(json(allowedGet.stdout).content).toBe("codex leg content");
+});
+
+test("Codex host blind rule hides claude_report until codex_report is saved", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "reverse-blind.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "reverse-blind", projectId: proj.id, hostModel: "codex" });
+  storage.putArtifact(db, "reverse-blind", "claude_report", "provider content already exists");
+
+  const blocked = await runBun(fusionPath, ["get", "--run-id", "reverse-blind", "--type", "claude_report"], common);
+  expect(blocked.code).not.toBe(0);
+  expect(blocked.stderr).toContain("save your codex_report first");
+  const blockedExport = await runBun(
+    fusionPath,
+    ["export", "--run-id", "reverse-blind", "--type", "claude_report", "--out", join(project, "leak.md")],
+    common,
+  );
+  expect(blockedExport.code).not.toBe(0);
+  expect(blockedExport.stderr).toContain("blind rule");
+
+  storage.putArtifact(db, "reverse-blind", "codex_report", "blind host content");
+  const allowed = await runBun(fusionPath, ["get", "--run-id", "reverse-blind", "--type", "claude_report"], common);
+  expect(allowed.code).toBe(0);
+  expect(json(allowed.stdout).content).toBe("provider content already exists");
+});
+
+test("blind rule treats whitespace-only host reports as missing in both host directions", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "whitespace-blind.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+
+  storage.startRun(db, { runId: "whitespace-claude-host", projectId: proj.id, hostModel: "claude" });
+  storage.putArtifact(db, "whitespace-claude-host", "claude_report", "  \n\t ");
+  storage.putArtifact(db, "whitespace-claude-host", "codex_report", "provider report");
+  const claudeHostRead = await runBun(
+    fusionPath,
+    ["get", "--run-id", "whitespace-claude-host", "--type", "codex_report"],
+    common,
+  );
+  expect(claudeHostRead.code).not.toBe(0);
+  expect(claudeHostRead.stderr).toContain("blind rule");
+
+  storage.startRun(db, { runId: "whitespace-codex-host", projectId: proj.id, hostModel: "codex" });
+  storage.putArtifact(db, "whitespace-codex-host", "codex_report", "  \n\t ");
+  storage.putArtifact(db, "whitespace-codex-host", "claude_report", "provider report");
+  const codexHostRead = await runBun(
+    fusionPath,
+    ["get", "--run-id", "whitespace-codex-host", "--type", "claude_report"],
+    common,
+  );
+  expect(codexHostRead.code).not.toBe(0);
+  expect(codexHostRead.stderr).toContain("blind rule");
+});
+
+test("host/provider CLI derives a missing side, persists selection, and rejects bad pairs", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "selection.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  const started = await runBun(
+    fusionPath,
+    ["start", "--run-id", "selected", "--provider", "claude", "--project-dir", project],
+    common,
+  );
+  expect(started.code).toBe(0);
+  expect(json(started.stdout)).toMatchObject({ hostModel: "codex", providerModel: "claude" });
+  const status = await runBun(fusionPath, ["status", "--run-id", "selected"], common);
+  expect(json(status.stdout).run).toMatchObject({ hostModel: "codex", providerModel: "claude" });
+
+  const bad = await runBun(
+    fusionPath,
+    ["start", "--run-id", "bad", "--host", "codex", "--provider", "codex", "--project-dir", project],
+    common,
+  );
+  expect(bad.code).not.toBe(0);
+  expect(bad.stderr).toContain("must be different");
+});
+
+test("start rejects stored selection mismatch before preflighting the requested provider", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "start-mismatch-order.db");
+  await mkdir(project, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "already-codex-host", projectId: proj.id, hostModel: "codex" });
+
+  const result = await runBun(
+    fusionPath,
+    [
+      "start", "--run-id", "already-codex-host",
+      "--host", "claude", "--provider", "codex",
+      "--project-dir", project,
+    ],
+    { cwd: project, bin, log, env: { FUSION_DB: dbFile, FAKE_CODEX_EXIT: "1" } },
+  );
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("host/provider mismatch");
+  expect(result.stdout).toBe("");
+  expect((await readLogs(log)).filter((entry) => entry.tool === "codex")).toHaveLength(0);
+});
+
+test("relay rejects an explicit host/provider pair that mismatches stored run metadata", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "relay-mismatch.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "stored-codex-host", projectId: proj.id, hostModel: "codex" });
+  storage.putArtifact(db, "stored-codex-host", "brief", "the brief");
+
+  const relay = await runBun(
+    fusionPath,
+    ["relay", "--run-id", "stored-codex-host", "--host", "claude", "--provider", "codex"],
+    common,
+  );
+  expect(relay.code).not.toBe(0);
+  expect(json(relay.stdout).reason).toContain("host/provider mismatch");
+  expect(storage.getArtifact(db, "stored-codex-host", "codex_report")).toBeNull();
+  expect(storage.getArtifact(db, "stored-codex-host", "claude_report")).toBeNull();
 });
 
 test("put refuses empty/whitespace-only content and stores nothing", async () => {

@@ -181,6 +181,30 @@ test("runner prints a JSON receipt even on a fatal crash (unusable DB path)", as
   expect(summary.category).toBe("unknown");
 });
 
+test("early fatal receipt uses claudeAvailable for an explicit Codex/Claude run", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  const dbDir = join(root, "db-is-a-directory");
+  await mkdir(dbDir, { recursive: true });
+
+  const result = await runBun(
+    runnerPath,
+    [
+      "--run-id", "claude-crash-run",
+      "--host", "codex",
+      "--provider", "claude",
+      "--project-dir", project,
+    ],
+    { cwd: root, bin, log, env: { FUSION_DB: dbDir } },
+  );
+  expect(result.code).not.toBe(0);
+  const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(receipt).toMatchObject({ runId: "claude-crash-run", claudeAvailable: false, category: "unknown" });
+  expect(receipt.codexAvailable).toBeUndefined();
+});
+
 test("runner success after a prior failure clears the recorded drop reason", async () => {
   const root = await tempDir();
   const { bin, log } = await makeFakeBin(root);
@@ -209,4 +233,27 @@ test("runner success after a prior failure clears the recorded drop reason", asy
   expect(detail.codexReport).toBe("codex ok");
   expect(detail.codexFailReason).toBeNull();
   expect(detail.codexFailCategory).toBeNull();
+});
+
+test("runner rejects unsupported same-model selection with a machine-readable failure receipt", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  await writeFile(join(project, "brief.md"), "Plan something", "utf8");
+  const result = await runBun(
+    runnerPath,
+    [
+      "--run-id", "same-model",
+      "--host", "codex",
+      "--provider", "codex",
+      "--brief-file", "brief.md",
+      "--project-dir", project,
+    ],
+    { cwd: project, bin, log, env: { FUSION_DB: join(root, "same.db") } },
+  );
+  expect(result.code).not.toBe(0);
+  const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(receipt.reason).toContain("must be different");
+  expect(receipt.codexAvailable).toBe(false);
 });

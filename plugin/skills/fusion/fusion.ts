@@ -3,9 +3,10 @@
 // remain internal implementation details that can move without changing the skill contract.
 
 import { parseArgs } from "node:util";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { launchDashboard, stopRunningDashboard } from "./dashboard";
-import { preflightCodex } from "./lib/preflight";
+import { preflightProvider } from "./lib/preflight";
 import * as storage from "./storage";
 
 type CliValue = string | boolean | undefined;
@@ -17,6 +18,8 @@ const OPTIONS_BY_COMMAND = {
     "run-id": stringOption,
     "project-dir": stringOption,
     title: stringOption,
+    host: stringOption,
+    provider: stringOption,
   },
   put: { "run-id": stringOption, type: stringOption, file: stringOption },
   get: { "run-id": stringOption, type: stringOption },
@@ -25,6 +28,8 @@ const OPTIONS_BY_COMMAND = {
     "project-dir": stringOption,
     "brief-file": stringOption,
     "timeout-ms": stringOption,
+    host: stringOption,
+    provider: stringOption,
   },
   finish: { "run-id": stringOption },
   export: { "run-id": stringOption, type: stringOption, out: stringOption },
@@ -90,18 +95,22 @@ function ensureRunExists(db: ReturnType<typeof storage.open>, runId: string): vo
   if (storage.getRunProjectId(db, runId) === null) throw new CliError(`run not found: ${runId}`);
 }
 
-// The blind rule, enforced in code (the "taala"). `get`/`export` of the codex_report REFUSE until a
-// claude_report exists for that run — the host must write its own leg first so the two legs stay
-// independent. No --force override; the SKILL.md prose warning stays as belt-and-suspenders.
+// The blind rule, enforced in code (the "taala"). A host cannot read/export the external provider's
+// report until its own report exists. No --force override.
 function assertBlindRuleSatisfied(
   db: ReturnType<typeof storage.open>,
   runId: string,
   type: storage.ArtifactType,
 ): void {
-  if (type !== "codex_report") return;
-  if (storage.getArtifact(db, runId, "claude_report") === null) {
+  const hostModel = storage.getRunHostModel(db, runId);
+  if (hostModel === null) throw new CliError(`run not found: ${runId}`);
+  const providerType: storage.ArtifactType = hostModel === "claude" ? "codex_report" : "claude_report";
+  const hostType: storage.ArtifactType = hostModel === "claude" ? "claude_report" : "codex_report";
+  if (type !== providerType) return;
+  const hostReport = storage.getArtifact(db, runId, hostType);
+  if (hostReport === null || hostReport.trim() === "") {
     throw new CliError(
-      "blind rule: save your claude_report first — Fusion refuses to reveal the codex_report until your own leg is written (independence is the whole point).",
+      `blind rule: save your ${hostType} first — Fusion refuses to reveal the ${providerType} until your own leg is written (independence is the whole point).`,
     );
   }
 }
@@ -136,23 +145,63 @@ async function execute(command: Command, args: CliValues): Promise<void> {
   switch (command) {
     case "start": {
       const projectDir = resolve(optionalString(args, "project-dir") ?? process.cwd());
-      // Fail-fast gate: verify Codex end-to-end (install → login → real model ping)
-      // BEFORE creating any run row. A broken Codex would otherwise degrade Fusion to a pointless
+      let selection: ReturnType<typeof storage.resolveHostProvider>;
+      try {
+        selection = storage.resolveHostProvider(optionalString(args, "host"), optionalString(args, "provider"));
+      } catch (error) {
+        throw new CliError(error instanceof Error ? error.message : String(error), 2);
+      }
+      const requestedRunId = optionalString(args, "run-id");
+      let db: ReturnType<typeof storage.open> | undefined;
+      const assertStoredSelection = (candidate: ReturnType<typeof storage.open>, runId: string): void => {
+        const storedHost = storage.getRunHostModel(candidate, runId);
+        if (storedHost !== null && storedHost !== selection.hostModel) {
+          throw new CliError(
+            `host/provider mismatch for ${runId}: stored ${storedHost}/${storage.oppositeModel(storedHost)}, requested ${selection.hostModel}/${selection.providerModel}`,
+            2,
+          );
+        }
+      };
+      // An explicit run id may refer to a resumable run. Reject a conflicting selection before
+      // pinging the wrong provider. Keep the old no-run behavior side-effect free by opening SQLite
+      // early only when its file already exists.
+      if (requestedRunId && existsSync(storage.dbPath())) {
+        db = storage.open();
+        assertStoredSelection(db, requestedRunId);
+      }
+      // Fail-fast gate: verify the external provider end-to-end (install → login → real model ping)
+      // BEFORE creating any run row. A broken provider would otherwise degrade Fusion to a pointless
       // single-model plan only AFTER most host tokens are spent — so refuse here, create nothing, and
       // hand back the reason + copy-paste fix. No skip flag, no env escape hatch.
-      const pre = await preflightCodex(projectDir);
+      const pre = await preflightProvider(selection.providerModel, projectDir);
       if (!pre.ok) {
         const failure = pre.failures[0];
         writeJson({ ok: false, command, stage: "preflight", reason: failure.reason, fix: failure.fix });
         process.exitCode = 1; // natural non-zero exit; stdout above is fully flushed first
         return;
       }
-      const runId = optionalString(args, "run-id") ?? generatedRunId();
-      const db = storage.open();
+      const runId = requestedRunId ?? generatedRunId();
+      db ??= storage.open();
+      // Recheck after preflight in case another process created the same run while the ping ran.
+      assertStoredSelection(db, runId);
       const project = await storage.resolveProject(projectDir);
       storage.ensureProject(db, project);
-      storage.startRun(db, { runId, projectId: project.id, title: optionalString(args, "title") });
-      writeJson({ ok: true, command, runId, projectId: project.id, projectDir: project.root, preflight: "ok" });
+      storage.startRun(db, {
+        runId,
+        projectId: project.id,
+        title: optionalString(args, "title"),
+        hostModel: selection.hostModel,
+      });
+      writeJson({
+        ok: true,
+        command,
+        runId,
+        projectId: project.id,
+        projectDir: project.root,
+        hostModel: selection.hostModel,
+        providerModel: selection.providerModel,
+        preflight: "ok",
+      });
       return;
     }
     case "put": {
@@ -184,8 +233,30 @@ async function execute(command: Command, args: CliValues): Promise<void> {
     }
     case "relay": {
       const runId = requiredString(args, "run-id");
-      const childArgs = ["--run-id", runId, "--project-dir", optionalString(args, "project-dir") ?? process.cwd()];
-      for (const name of ["brief-file", "timeout-ms"] as const) {
+      const db = storage.open();
+      const storedRun = storage.getRunStatusRecord(db, runId);
+      if (storedRun === null) throw new CliError(`run not found: ${runId}`);
+
+      const requestedProjectDir = optionalString(args, "project-dir");
+      let projectDir: string;
+      if (requestedProjectDir) {
+        const requestedProject = await storage.resolveProject(resolve(requestedProjectDir));
+        if (requestedProject.id !== storedRun.projectId) {
+          throw new CliError(
+            `project mismatch for ${runId}: stored project is ${storedRun.projectDir || storedRun.projectId}, requested ${requestedProject.root}`,
+            2,
+          );
+        }
+        projectDir = requestedProject.root;
+      } else {
+        if (!storedRun.projectDir) {
+          throw new CliError(`stored project path is missing for ${runId}; pass --project-dir for the original project`, 2);
+        }
+        projectDir = storedRun.projectDir;
+      }
+
+      const childArgs = ["--run-id", runId, "--project-dir", projectDir];
+      for (const name of ["brief-file", "timeout-ms", "host", "provider"] as const) {
         const value = optionalString(args, name);
         if (value) childArgs.push(`--${name}`, value);
       }

@@ -33,7 +33,7 @@ test("run content roundtrips via getRunDetails", async () => {
   expect(d.createdAt).toBeTruthy();
 });
 
-test("schema has only projects and titled runs with embedded content + codex-failure columns", async () => {
+test("fresh schema v2 has host metadata and separate provider-failure columns", async () => {
   const { db } = await freshDb();
   const tables = db
     .query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -47,14 +47,17 @@ test("schema has only projects and titled runs with embedded content + codex-fai
     "title",
     "status",
     "created_at",
+    "host_model",
     "brief",
     "claude_report",
     "codex_report",
     "plan",
     "codex_fail_reason",
     "codex_fail_category",
+    "claude_fail_reason",
+    "claude_fail_category",
   ]);
-  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(1);
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(2);
   const titleColumn = (db.query(`PRAGMA table_info(runs)`).all() as Array<{
     name: string;
     notnull: number;
@@ -69,6 +72,91 @@ test("schema has only projects and titled runs with embedded content + codex-fai
     "project_id",
     "created_at",
   ]);
+});
+
+test("v1 database migrates transactionally to v2 and preserves existing content", async () => {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "v1.db");
+  const v1 = new Database(dbFile, { create: true });
+  v1.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, root_path TEXT, created_at TEXT);
+    CREATE TABLE runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL DEFAULT 'Untitled run',
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
+      created_at TEXT NOT NULL,
+      brief TEXT,
+      claude_report TEXT,
+      codex_report TEXT,
+      plan TEXT,
+      codex_fail_reason TEXT,
+      codex_fail_category TEXT
+    );
+    INSERT INTO projects VALUES ('p1', 'project', '/x', '2026-01-01T00:00:00.000Z');
+    INSERT INTO runs VALUES ('r1', 'p1', 'old run', 'running', '2026-01-01T00:00:00.000Z',
+      'brief-v1', 'claude-v1', 'codex-v1', 'plan-v1', 'old failure', 'transient');
+    PRAGMA user_version = 1;
+  `);
+  v1.close();
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const detail = storage.getRunDetails(db, "r1");
+  expect(detail).toMatchObject({
+    hostModel: "claude",
+    providerModel: "codex",
+    brief: "brief-v1",
+    claudeReport: "claude-v1",
+    codexReport: "codex-v1",
+    plan: "plan-v1",
+    codexFailReason: "old failure",
+    claudeFailReason: null,
+  });
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(2);
+});
+
+test("concurrent v1 opens converge on one complete v2 migration", async () => {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "concurrent-v1.db");
+  const v1 = new Database(dbFile, { create: true });
+  v1.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, root_path TEXT, created_at TEXT);
+    CREATE TABLE runs (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL DEFAULT 'Untitled run',
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
+      created_at TEXT NOT NULL, brief TEXT, claude_report TEXT, codex_report TEXT, plan TEXT,
+      codex_fail_reason TEXT, codex_fail_category TEXT
+    );
+    PRAGMA user_version = 1;
+  `);
+  v1.close();
+
+  const storagePath = join(import.meta.dir, "../plugin/skills/fusion/storage.ts");
+  const worker = `
+    process.env.FUSION_DB = ${JSON.stringify(dbFile)};
+    const storage = await import(${JSON.stringify(storagePath)});
+    storage.open();
+  `;
+  const workers = Array.from({ length: 6 }, () =>
+    Bun.spawn(["bun", "-e", worker], { stdout: "ignore", stderr: "pipe" }),
+  );
+  const results = await Promise.all(workers.map(async (proc) => ({
+    code: await proc.exited,
+    stderr: await new Response(proc.stderr).text(),
+  })));
+  expect(results, results.map((result) => result.stderr).join("\n")).toEqual(
+    Array.from({ length: 6 }, () => ({ code: 0, stderr: "" })),
+  );
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(2);
+  expect((db.query(`PRAGMA table_info(runs)`).all() as Array<{ name: string }>).map((row) => row.name)).toContain(
+    "claude_fail_category",
+  );
 });
 
 test("a DB stamped with an unknown schema version refuses to open instead of running against it", async () => {
@@ -96,6 +184,26 @@ test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a r
   detail = storage.getRunDetails(db, "r1");
   expect(detail.codexFailReason).toBeNull();
   expect(detail.codexFailCategory).toBeNull();
+});
+
+test("host/provider metadata and Claude provider failures round-trip", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "r1", projectId: "p1", hostModel: "codex" });
+  storage.recordClaudeFailure(db, "r1", "claude exited 1: 429 usage limit", "quota");
+
+  expect(storage.resolveHostProvider(undefined, "claude")).toEqual({ hostModel: "codex", providerModel: "claude" });
+  expect(storage.resolveHostProvider("codex", undefined)).toEqual({ hostModel: "codex", providerModel: "claude" });
+  expect(() => storage.resolveHostProvider("codex", "codex")).toThrow("must be different");
+  expect(storage.getRunDetails(db, "r1")).toMatchObject({
+    hostModel: "codex",
+    providerModel: "claude",
+    claudeFailCategory: "quota",
+    providerFailCategory: "quota",
+  });
+
+  storage.clearClaudeFailure(db, "r1");
+  expect(storage.getRunDetails(db, "r1").providerFailReason).toBeNull();
 });
 
 test("startRun normalizes missing titles and preserves the original title on idempotent starts", async () => {

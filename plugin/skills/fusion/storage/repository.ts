@@ -81,6 +81,33 @@ export function getProject(db: Database, id: string): Project | null {
 export const ARTIFACT_TYPES = ["brief", "claude_report", "codex_report", "plan"] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 export const DEFAULT_RUN_TITLE = "Untitled run";
+export const MODEL_NAMES = ["claude", "codex"] as const;
+export type ModelName = (typeof MODEL_NAMES)[number];
+export type HostModel = ModelName;
+export type ProviderModel = ModelName;
+
+export function parseModelName(value: string, label = "model"): ModelName {
+  if ((MODEL_NAMES as readonly string[]).includes(value)) return value as ModelName;
+  throw new Error(`invalid ${label} '${value}'; expected one of: ${MODEL_NAMES.join(", ")}`);
+}
+
+export function oppositeModel(model: ModelName): ModelName {
+  return model === "claude" ? "codex" : "claude";
+}
+
+export function resolveHostProvider(host?: string, provider?: string): {
+  hostModel: HostModel;
+  providerModel: ProviderModel;
+} {
+  const hostModel = host === undefined
+    ? provider === undefined ? "claude" : oppositeModel(parseModelName(provider, "provider"))
+    : parseModelName(host, "host");
+  const providerModel = provider === undefined ? oppositeModel(hostModel) : parseModelName(provider, "provider");
+  if (hostModel === providerModel) {
+    throw new Error(`unsupported host/provider pair '${hostModel}/${providerModel}'; host and provider must be different`);
+  }
+  return { hostModel, providerModel };
+}
 
 const artifactColumns: Record<ArtifactType, ArtifactType> = {
   brief: "brief",
@@ -96,14 +123,21 @@ export function parseArtifactType(value: string): ArtifactType {
 
 export function startRun(
   db: Database,
-  args: { runId: string; projectId: string; title?: string },
+  args: { runId: string; projectId: string; title?: string; hostModel?: HostModel },
 ): void {
   const title = args.title?.trim() || DEFAULT_RUN_TITLE;
   db.query(
-    `INSERT INTO runs (id, project_id, title, status, created_at)
-     VALUES (?, ?, ?, 'running', ?)
+    `INSERT INTO runs (id, project_id, title, status, created_at, host_model)
+     VALUES (?, ?, ?, 'running', ?, ?)
      ON CONFLICT(id) DO NOTHING`,
-  ).run(args.runId, args.projectId, title, now());
+  ).run(args.runId, args.projectId, title, now(), args.hostModel ?? "claude");
+}
+
+export function getRunHostModel(db: Database, runId: string): HostModel | null {
+  const row = db.query(`SELECT host_model FROM runs WHERE id = ?`).get(runId) as
+    | { host_model: string }
+    | undefined;
+  return row ? parseModelName(row.host_model, "stored host") : null;
 }
 
 export function finishRun(db: Database, runId: string): void {
@@ -119,6 +153,7 @@ export function finishRun(db: Database, runId: string): void {
 // The category the runner attaches to a dropped Codex leg (see runner/codex.ts classifyCodexFailure).
 export const CODEX_FAIL_CATEGORIES = ["transient", "quota", "fixable", "unknown"] as const;
 export type CodexFailCategory = (typeof CODEX_FAIL_CATEGORIES)[number];
+export type ClaudeFailCategory = CodexFailCategory;
 
 // Persist WHY the Codex leg dropped onto the run row. Replaces the old fake "# Codex — UNAVAILABLE"
 // placeholder artifact: a codex_report in the DB is now always a real report, and the failure lives
@@ -135,6 +170,17 @@ export function recordCodexFailure(db: Database, runId: string, reason: string, 
 // case) so a stale drop reason never lingers on a now-healthy run.
 export function clearCodexFailure(db: Database, runId: string): void {
   db.query(`UPDATE runs SET codex_fail_reason = NULL, codex_fail_category = NULL WHERE id = ?`).run(runId);
+}
+
+export function recordClaudeFailure(db: Database, runId: string, reason: string, category: ClaudeFailCategory): void {
+  const res = db
+    .query(`UPDATE runs SET claude_fail_reason = ?, claude_fail_category = ? WHERE id = ?`)
+    .run(reason, category, runId);
+  if (res.changes === 0) console.error(`recordClaudeFailure: matched no run — unknown id '${runId}'`);
+}
+
+export function clearClaudeFailure(db: Database, runId: string): void {
+  db.query(`UPDATE runs SET claude_fail_reason = NULL, claude_fail_category = NULL WHERE id = ?`).run(runId);
 }
 
 export function putArtifact(db: Database, runId: string, type: ArtifactType, content: string): void {
@@ -177,8 +223,8 @@ export function getRuns(db: Database, projectId: string): RunSummary[] {
 export function getRunDetails(db: Database, runId: string) {
   const run = db
     .query(
-      `SELECT id, project_id, title, status, created_at, brief, claude_report, codex_report, plan,
-              codex_fail_reason, codex_fail_category
+      `SELECT id, project_id, title, status, created_at, host_model, brief, claude_report, codex_report, plan,
+              codex_fail_reason, codex_fail_category, claude_fail_reason, claude_fail_category
        FROM runs WHERE id = ?`,
     )
     .get(runId) as
@@ -188,27 +234,38 @@ export function getRunDetails(db: Database, runId: string) {
         title: string;
         status: string;
         created_at: string;
+        host_model: string;
         brief: string | null;
         claude_report: string | null;
         codex_report: string | null;
         plan: string | null;
         codex_fail_reason: string | null;
         codex_fail_category: string | null;
+        claude_fail_reason: string | null;
+        claude_fail_category: string | null;
       }
     | undefined;
   if (!run) throw new Error(`run not found: ${runId}`);
+  const hostModel = parseModelName(run.host_model, "stored host");
+  const providerModel = oppositeModel(hostModel);
   return {
     runId: run.id,
     projectId: run.project_id,
     title: run.title,
     status: run.status,
     createdAt: run.created_at,
+    hostModel,
+    providerModel,
     brief: run.brief,
     claudeReport: run.claude_report,
     codexReport: run.codex_report,
     plan: run.plan,
     codexFailReason: run.codex_fail_reason,
     codexFailCategory: run.codex_fail_category,
+    claudeFailReason: run.claude_fail_reason,
+    claudeFailCategory: run.claude_fail_category,
+    providerFailReason: providerModel === "codex" ? run.codex_fail_reason : run.claude_fail_reason,
+    providerFailCategory: providerModel === "codex" ? run.codex_fail_category : run.claude_fail_category,
   };
 }
 
@@ -237,9 +294,15 @@ export interface RunStatusRecord {
   projectDir: string; // the project's root path — tells the user WHICH project a resumable run belongs to
   status: string;
   createdAt: string;
+  hostModel: HostModel;
+  providerModel: ProviderModel;
   artifacts: { brief: boolean; claudeReport: boolean; codexReport: boolean; plan: boolean };
   codexFailReason: string | null;
   codexFailCategory: string | null;
+  claudeFailReason: string | null;
+  claudeFailCategory: string | null;
+  providerFailReason: string | null;
+  providerFailCategory: string | null;
 }
 
 interface RunStatusRow {
@@ -249,23 +312,28 @@ interface RunStatusRow {
   root_path: string | null;
   status: string;
   created_at: string;
+  host_model: string;
   has_brief: number;
   has_claude: number;
   has_codex: number;
   has_plan: number;
   codex_fail_reason: string | null;
   codex_fail_category: string | null;
+  claude_fail_reason: string | null;
+  claude_fail_category: string | null;
 }
 
 const RUN_STATUS_COLUMNS = `
-  r.id, r.title, r.project_id, r.status, r.created_at,
-  r.codex_fail_reason, r.codex_fail_category, p.root_path,
+  r.id, r.title, r.project_id, r.status, r.created_at, r.host_model,
+  r.codex_fail_reason, r.codex_fail_category, r.claude_fail_reason, r.claude_fail_category, p.root_path,
   (r.brief IS NOT NULL)         AS has_brief,
   (r.claude_report IS NOT NULL) AS has_claude,
   (r.codex_report IS NOT NULL)  AS has_codex,
   (r.plan IS NOT NULL)          AS has_plan`;
 
 function toRunStatusRecord(row: RunStatusRow): RunStatusRecord {
+  const hostModel = parseModelName(row.host_model, "stored host");
+  const providerModel = oppositeModel(hostModel);
   return {
     runId: row.id,
     title: row.title,
@@ -273,6 +341,8 @@ function toRunStatusRecord(row: RunStatusRow): RunStatusRecord {
     projectDir: row.root_path ?? "",
     status: row.status,
     createdAt: row.created_at,
+    hostModel,
+    providerModel,
     artifacts: {
       brief: row.has_brief === 1,
       claudeReport: row.has_claude === 1,
@@ -281,6 +351,10 @@ function toRunStatusRecord(row: RunStatusRow): RunStatusRecord {
     },
     codexFailReason: row.codex_fail_reason,
     codexFailCategory: row.codex_fail_category,
+    claudeFailReason: row.claude_fail_reason,
+    claudeFailCategory: row.claude_fail_category,
+    providerFailReason: providerModel === "codex" ? row.codex_fail_reason : row.claude_fail_reason,
+    providerFailCategory: providerModel === "codex" ? row.codex_fail_category : row.claude_fail_category,
   };
 }
 

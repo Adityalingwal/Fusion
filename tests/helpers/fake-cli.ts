@@ -56,8 +56,48 @@ await record({ unhandled: true });
 process.exit(0);
 `;
 
+  const claude = `
+import { appendFile } from "node:fs/promises";
+const args = Bun.argv.slice(2);
+const log = process.env.FAKE_CLI_LOG;
+async function record(extra = {}) {
+  const stdin = await Bun.stdin.text();
+  await appendFile(log, JSON.stringify({
+    tool: "claude",
+    args,
+    cwd: process.cwd(),
+    stdinLength: stdin.length,
+    stdinPreview: stdin.slice(0, 80),
+    ...extra,
+  }) + "\\n");
+  return stdin;
+}
+if (args.includes("--version")) {
+  if (process.env.FAKE_CLAUDE_VERSION_FAIL) process.exit(1);
+  console.log("claude-code test");
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "status") {
+  if (process.env.FAKE_CLAUDE_AUTH_EXIT) process.exit(Number(process.env.FAKE_CLAUDE_AUTH_EXIT));
+  if (process.env.FAKE_CLAUDE_STATUS) console.log(process.env.FAKE_CLAUDE_STATUS);
+  else console.log(JSON.stringify({ loggedIn: process.env.FAKE_CLAUDE_LOGGED_IN !== "false" }));
+  process.exit(0);
+}
+if (args.includes("-p") || args.includes("--print")) {
+  const stdin = await record();
+  const delay = Number(process.env.FAKE_CLAUDE_SLEEP_MS || "0");
+  if (delay > 0) await Bun.sleep(delay);
+  if (process.env.FAKE_CLAUDE_STDERR) console.error(process.env.FAKE_CLAUDE_STDERR);
+  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CLAUDE_OUTPUT ?? "claude ok");
+  if (output) console.log(output);
+  process.exit(Number(process.env.FAKE_CLAUDE_EXIT || "0"));
+}
+await record({ unhandled: true });
+process.exit(0);
+`;
+
   await writeFile(join(bin, "codex.ts"), codex, "utf8");
-  await writeFile(join(bin, "claude.ts"), 'console.log("claude test");\n', "utf8");
+  await writeFile(join(bin, "claude.ts"), claude, "utf8");
   if (process.platform === "win32") {
     await writeFile(join(bin, "codex.cmd"), '@echo off\r\nbun "%~dp0codex.ts" %*\r\n', "utf8");
     await writeFile(join(bin, "claude.cmd"), '@echo off\r\nbun "%~dp0claude.ts" %*\r\n', "utf8");
@@ -75,7 +115,7 @@ process.exit(0);
 export async function runBun(
   script: string,
   args: string[],
-  opts: { cwd: string; bin: string; log: string; env?: Record<string, string> },
+  opts: { cwd: string; bin: string; log: string; env?: Record<string, string>; inheritPath?: boolean },
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const env = { ...process.env, ...opts.env };
   const parentPathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH");
@@ -83,7 +123,7 @@ export async function runBun(
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === "PATH") delete env[key];
   }
-  env.PATH = `${opts.bin}${delimiter}${parentPath || ""}`;
+  env.PATH = opts.inheritPath === false ? opts.bin : `${opts.bin}${delimiter}${parentPath || ""}`;
   env.FAKE_CLI_LOG = opts.log;
 
   const proc = Bun.spawn([process.execPath, script, ...args], {

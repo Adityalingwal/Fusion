@@ -1,19 +1,17 @@
-// Shared Codex preflight — the single source of truth for "can Fusion actually run Codex right now?".
-// `fusion.ts start` is the only caller: the fail-fast gate that refuses to create a run when Codex is
-// broken. On failure it surfaces `failures[0]` (reason + copy-paste fix) and creates nothing.
+// Provider-aware preflight — the single source of truth for whether Fusion can run the selected
+// external model right now. `fusion.ts start` is the caller: the fail-fast gate that refuses to
+// create a run when the provider is broken. On failure it surfaces failures[0] and creates nothing.
 //
 // The checks run in order and short-circuit: install → login → real model ping. The ping is the
-// load-bearing one — version/login both pass even when the PATH `codex` is too old for the user's
-// configured model (stale binary → its argv is rejected / the model 400s "requires a newer version")
-// or the provider is out of credits (authed but 400 insufficient credits). Both are false-greens that
-// only firing the ACTUAL configured model catches, so preflight does it every time. (No separate
-// exec-flags help-text check: a flag the runner can't pass makes THIS ping's argv fail instantly, so
-// the check added nothing but false-block risk on help-format drift.)
+// load-bearing one: version/login can pass while the actual invocation flags or configured model
+// fail. The ping therefore reuses each provider's real runner argv.
 
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCodexArgs, extractCodexError, actionableHint } from "../runner/codex";
+import { buildClaudeArgs, claudeActionableHint } from "../runner/claude";
+import type { ProviderModel } from "../storage";
 import { runProc } from "./subprocess";
 
 export type PreflightCheck = "install" | "login" | "ping";
@@ -49,6 +47,10 @@ export function pingTimeoutDetail(): string {
   return `Codex did not reply within ${Math.round(PING_TIMEOUT_MS / 1000)}s → This is usually temporary (slow network or a busy model) — just run /fusion again.`;
 }
 
+export function claudePingTimeoutDetail(): string {
+  return `Claude did not reply within ${Math.round(PING_TIMEOUT_MS / 1000)}s → This is usually temporary (slow network or a busy model) — just run /fusion again.`;
+}
+
 function shortErr(text: string): string {
   const last = text.trim().split("\n").filter(Boolean).at(-1) || "no output";
   return last.length > 80 ? `${last.slice(0, 80)}…` : last;
@@ -59,6 +61,15 @@ function codexLoggedIn(output: string): boolean {
   // match (`not logged in`) false-greened on "not currently logged in" — any word wedged between
   // "not" and "logged in" slipped past it.
   return /logged in (as|using)\b/i.test(output);
+}
+
+function claudeLoggedIn(output: string): boolean {
+  try {
+    const parsed = JSON.parse(output) as { loggedIn?: unknown };
+    return parsed.loggedIn === true;
+  } catch {
+    return /logged\s*in\s*[:=]?\s*true|"loggedIn"\s*:\s*true/i.test(output);
+  }
 }
 
 // The ping detail already embeds its actionable fix as a "… → <fix>" tail (via actionableHint). Split
@@ -130,4 +141,50 @@ export async function preflightCodex(cwd: string): Promise<PreflightResult> {
   }
 
   return { ok: failures.length === 0, failures };
+}
+
+export async function preflightClaude(cwd: string): Promise<PreflightResult> {
+  const failures: PreflightFailure[] = [];
+
+  const version = await run(["claude", "--version"]);
+  if (version.code !== 0) {
+    failures.push({
+      check: "install",
+      reason: "Claude Code CLI not found (or not on PATH)",
+      fix: "Install Claude Code, then run: claude auth login",
+    });
+    return { ok: false, failures };
+  }
+
+  const status = await run(["claude", "auth", "status", "--json"]);
+  if (status.code !== 0 || !claudeLoggedIn(status.out)) {
+    failures.push({ check: "login", reason: "Claude Code is installed but not logged in", fix: "claude auth login" });
+    return { ok: false, failures };
+  }
+
+  const ping = await runProc(["claude", ...buildClaudeArgs()], {
+    stdin: "Reply with the single word READY.",
+    timeoutMs: PING_TIMEOUT_MS,
+    cwd,
+  });
+  const reply = ping.stdout.trim();
+  if (ping.timedOut || ping.code !== 0 || !/READY/i.test(reply)) {
+    let detail: string;
+    if (ping.timedOut) {
+      detail = claudePingTimeoutDetail();
+    } else if (ping.code !== 0) {
+      detail = claudeActionableHint(
+        [reply, ping.stderr.trim() ? shortErr(ping.stderr) : null].filter(Boolean).join(" | ") || "no error output",
+      );
+    } else {
+      detail = shortErr(reply || "empty reply");
+    }
+    const { reason, fix } = splitHint(detail);
+    failures.push({ check: "ping", reason, fix });
+  }
+  return { ok: failures.length === 0, failures };
+}
+
+export function preflightProvider(provider: ProviderModel, cwd: string): Promise<PreflightResult> {
+  return provider === "codex" ? preflightCodex(cwd) : preflightClaude(cwd);
 }

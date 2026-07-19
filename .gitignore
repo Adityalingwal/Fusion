@@ -3,3 +3,5 @@ node_modules/
 dist/
 *.log
 scripts/
+!codex/skills/fusion/scripts/
+!codex/skills/fusion/scripts/fusion.ts

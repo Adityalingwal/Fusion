@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fusion"
+  short_description: "Plan with independent Codex and Claude review"
+  default_prompt: "Use $fusion to create a blind, dual-model implementation plan."
