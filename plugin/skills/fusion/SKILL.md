@@ -131,6 +131,9 @@ ONE short clarifying question. Never silently map a typed answer onto the neares
    from the user's own `~/.codex/config.toml`), and writes the `codex_report` back to the DB. Its last
    stdout line is a JSON summary: `codexAvailable`, and on a drop a `reason` **and a `category`
    (`transient | quota | fixable | unknown`)** that step 7 uses to offer the right recovery choice.
+   The runner prepends a standing role-clarification to the relayed prompt (the leg is a planner, not
+   the Fusion host), and a hollow/off-task report (no `##` sections AND very short) is recorded as a
+   `transient` drop — step 7's Retry menu fires instead of a garbage report reaching the critique.
 
 6. **Write YOUR OWN leg, BLIND → save as the `claude_report` artifact** (same report format as the brief).
    Write it to a temp file, then

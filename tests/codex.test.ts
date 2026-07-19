@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { actionableHint, classifyCodexFailure } from "../plugin/skills/fusion/runner/codex";
+import { actionableHint, classifyCodexFailure, isHollowReport } from "../plugin/skills/fusion/runner/codex";
 
 // classifyCodexFailure is pure string → category, so it is tested directly against the reason
 // strings runner/codex.ts actually produces (extractCodexError / actionableHint / timeout / spawn).
@@ -22,6 +22,7 @@ test("classifyCodexFailure buckets each recognizable Codex drop reason", () => {
     ["codex could not start: spawn codex ENOENT", "fixable"],
     // transient — likely to pass on a plain retry
     ["timed out after 5000ms", "transient"],
+    ['hollow report (no ## sections, 78 chars) — the leg likely went off-task: "preflight blocked"', "transient"],
     ["codex exited 1: network connection reset", "transient"],
     ["codex exited 1: [503] server error", "transient"],
     ["codex exited 1: stream error while reading response", "transient"],
@@ -58,4 +59,16 @@ test("actionableHint maps an unexpected-argument / unrecognized-option error to 
   for (const msg of ["error: unexpected argument '--ephemeral' found", "unrecognized option '--json'"]) {
     expect(actionableHint(msg)).toContain("npm i -g @openai/codex@latest");
   }
+});
+
+// isHollowReport requires BOTH signals (no ## sections AND short) — either one alone must not drop
+// the leg, or real-but-imperfect reports would start failing.
+test("isHollowReport fires only on short AND heading-less text", () => {
+  expect(isHollowReport("preflight blocked: claude auth login required.")).toBe(true);
+  // short but kept a section → format_warning territory, not hollow
+  expect(isHollowReport("## Approach\nDo the thing.")).toBe(false);
+  // heading-less but long → still usable content
+  expect(isHollowReport(`plan prose ${"detail ".repeat(120)}`)).toBe(false);
+  // section headings must be at line start — an inline "##" doesn't count as structure
+  expect(isHollowReport("see the ## marker inline")).toBe(true);
 });

@@ -1,6 +1,11 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 
+// Default fake report: structured (two ## sections) so it clears the runner's hollow-report detector,
+// mirroring what a healthy codex leg actually returns. Tests that need a degenerate report override
+// via FAKE_CODEX_OUTPUT.
+export const FAKE_CODEX_REPORT = "## Plan\ncodex ok\n\n## Risks\nnone";
+
 export async function makeFakeBin(root: string): Promise<{ bin: string; log: string }> {
   const bin = join(root, "bin");
   const log = join(root, "cli-log.jsonl");
@@ -48,7 +53,7 @@ if (args[0] === "exec") {
   const outputFlag = args.includes("-o") ? "-o" : "--output-last-message";
   const outIndex = args.indexOf(outputFlag);
   // Echo READY when the prompt asks for it (the preflight model ping), else the configured/default output.
-  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CODEX_OUTPUT || "codex ok");
+  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CODEX_OUTPUT || ${JSON.stringify(FAKE_CODEX_REPORT)});
   if (outIndex >= 0) await writeFile(args[outIndex + 1], output, "utf8");
   process.exit(Number(process.env.FAKE_CODEX_EXIT || "0"));
 }

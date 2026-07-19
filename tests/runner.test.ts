@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import * as storage from "../plugin/skills/fusion/storage";
-import { makeFakeBin, readLogs, runBun } from "./helpers/fake-cli";
+import { CODEX_ROLE_PREAMBLE } from "../plugin/skills/fusion/runner/codex";
+import { FAKE_CODEX_REPORT, makeFakeBin, readLogs, runBun } from "./helpers/fake-cli";
 import { useTempDirs } from "./helpers/temp";
 
 const fusionRoot = resolve(import.meta.dir, "../plugin/skills/fusion");
@@ -44,13 +45,16 @@ test("runner sets project cwd and stores reports without metadata", async () => 
   process.env.FUSION_DB = join(root, "test.db");
   const detail = storage.getRunDetails(storage.open(), "run-a");
   expect(detail.title).toBe("Direct runner title");
-  expect(detail.codexReport).toBe("codex ok");
+  expect(detail.codexReport).toBe(FAKE_CODEX_REPORT);
   expect(detail.brief?.startsWith("Review this diff")).toBe(true);
 
   const logs = await readLogs(log);
   const codex = logs.find((entry) => entry.tool === "codex" && entry.args[0] === "exec")!;
   expect(codex.cwd).toBe(projectReal);
-  expect(codex.stdinLength).toBe(hugeBrief.length);
+  // The relay prompt = role preamble + blank line + the EXACT brief; the stored brief artifact above
+  // stays preamble-free.
+  expect(codex.stdinPreview.startsWith("[Fusion leg role")).toBe(true);
+  expect(codex.stdinLength).toBe(CODEX_ROLE_PREAMBLE.length + 2 + hugeBrief.length);
   expect(codex.args).toContain("-C");
   expect(codex.args).toContain(project);
   // No -m: model comes from the user's ~/.codex/config.toml, not a fusion override.
@@ -64,16 +68,75 @@ test("runner warns on an unstructured report without persisting relay metadata",
   await mkdir(project, { recursive: true });
   await writeFile(join(project, "brief.md"), "Plan something", "utf8");
 
+  // ONE ## section: short of the two the format asks for (→ format_warning), but enough structure to
+  // clear the hollow detector — the leg stays ok and the report is stored as-is.
+  const oneSection = "## Approach\nDo the thing carefully.";
   const result = await runBun(
     runnerPath,
     ["--run-id", "meta-run", "--brief-file", "brief.md", "--project-dir", project, "--timeout-ms", "5000"],
-    { cwd: root, bin, log, env: { FAKE_CODEX_OUTPUT: "only-one-heading", FUSION_DB: join(root, "meta.db") } },
+    { cwd: root, bin, log, env: { FAKE_CODEX_OUTPUT: oneSection, FUSION_DB: join(root, "meta.db") } },
   );
 
   expect(result.code).toBe(0);
   expect(result.stderr).toContain("format_warning");
+  const summary = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(summary).toEqual({ runId: "meta-run", codexAvailable: true });
   process.env.FUSION_DB = join(root, "meta.db");
-  expect(storage.getRunDetails(storage.open(), "meta-run").codexReport).toBe("only-one-heading");
+  expect(storage.getRunDetails(storage.open(), "meta-run").codexReport).toBe(oneSection);
+});
+
+test("runner warns (not drops) on a LONG heading-less report — length alone clears the hollow detector", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  await writeFile(join(project, "brief.md"), "Plan something", "utf8");
+
+  // trim() to match the runner's own trim of the -o file (repeat() leaves a trailing space).
+  const longProse = `A detailed plan without markdown headings. ${"detail ".repeat(120)}`.trim();
+  const result = await runBun(
+    runnerPath,
+    ["--run-id", "prose-run", "--brief-file", "brief.md", "--project-dir", project, "--timeout-ms", "5000"],
+    { cwd: root, bin, log, env: { FAKE_CODEX_OUTPUT: longProse, FUSION_DB: join(root, "prose.db") } },
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toContain("format_warning");
+  const summary = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(summary.codexAvailable).toBe(true);
+  process.env.FUSION_DB = join(root, "prose.db");
+  expect(storage.getRunDetails(storage.open(), "prose-run").codexReport).toBe(longProse);
+});
+
+test("runner drop: a hollow off-task report (no ## sections AND short) fails the leg as transient", async () => {
+  const root = await tempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  await writeFile(join(project, "brief.md"), "Plan something", "utf8");
+
+  // The real incident shape (run d7eed0a0): the leg role-confused itself into being the Fusion host
+  // and returned a one-line fake status instead of a report.
+  const hollow = "preflight blocked: run `claude auth login` first, then re-run the fusion CLI.";
+  const result = await runBun(
+    runnerPath,
+    ["--run-id", "hollow-run", "--brief-file", "brief.md", "--project-dir", project, "--timeout-ms", "5000"],
+    { cwd: root, bin, log, env: { FAKE_CODEX_OUTPUT: hollow, FUSION_DB: join(root, "hollow.db") } },
+  );
+
+  expect(result.code).toBe(0);
+  const summary = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(summary.codexAvailable).toBe(false);
+  expect(summary.reason).toContain("hollow report");
+  expect(summary.reason).toContain("preflight blocked"); // the preview keeps the drop diagnosable
+  expect(summary.category).toBe("transient"); // → step 7 offers Retry now, the verified-live recovery
+
+  process.env.FUSION_DB = join(root, "hollow.db");
+  const detail = storage.getRunDetails(storage.open(), "hollow-run");
+  // The invariant holds: a hollow report never lands as a codex_report artifact.
+  expect(detail.codexReport).toBeNull();
+  expect(detail.codexFailReason).toContain("hollow report");
+  expect(detail.codexFailCategory).toBe("transient");
 });
 
 test("runner drop: codex exits non-zero -> leg failed, NO placeholder report, failure recorded on the row", async () => {
@@ -230,7 +293,7 @@ test("runner success after a prior failure clears the recorded drop reason", asy
   );
   expect(ok.code).toBe(0);
   const detail = storage.getRunDetails(storage.open(), "retry-run");
-  expect(detail.codexReport).toBe("codex ok");
+  expect(detail.codexReport).toBe(FAKE_CODEX_REPORT);
   expect(detail.codexFailReason).toBeNull();
   expect(detail.codexFailCategory).toBeNull();
 });

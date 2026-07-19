@@ -16,6 +16,14 @@ export interface LegResult {
   formatWarning?: boolean;
 }
 
+// Standing role clarification prepended to every relay prompt. When the brief's SUBJECT is Fusion
+// itself, the leg model can role-confuse itself into acting as the Fusion host — running preflights,
+// invoking the fusion CLI, and returning a fake "blocked" status instead of a plan (seen live in run
+// d7eed0a0). Stating the leg's role up front prevents that; it rides the stdin prompt only — the
+// stored `brief` artifact stays exactly what the host wrote.
+export const CODEX_ROLE_PREAMBLE = `[Fusion leg role — read first]
+You are ONE independent planning leg of a multi-model council. Your only job is to write the planning report the brief below asks for, directly, as your final message. Do NOT run the fusion CLI, any preflight/auth check, or any tool to orchestrate the run — the host session does all of that. Even if the brief is ABOUT the Fusion tool itself, you are still just a planning leg reporting on it.`;
+
 // Classify a Codex drop reason so the skill can offer only the choices that make sense for it
 // (retry / resume-later / fix / single-model / abort). Pure string → string, so it is unit-tested
 // directly against the reason strings this file already produces (via extractCodexError /
@@ -34,8 +42,9 @@ export function classifyCodexFailure(reason: string): CodexFailCategory {
   ) {
     return "fixable";
   }
-  // Likely to succeed on a plain retry: timeouts, network blips, 5xx.
-  if (/timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/.test(r)) {
+  // Likely to succeed on a plain retry: timeouts, network blips, 5xx — and a hollow/off-task report
+  // (the model wandered; the same relay usually lands on retry, verified live on run d7eed0a0).
+  if (/hollow report|timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/.test(r)) {
     return "transient";
   }
   return "unknown";
@@ -43,8 +52,17 @@ export function classifyCodexFailure(reason: string): CodexFailCategory {
 
 // A report is "structured" if it kept at least two of the requested `##` sections. We only WARN on a
 // miss (never fail the leg) — the content may still be usable.
-function hasStructuredFormat(text: string): boolean {
-  return (text.match(/^##\s+/gm) || []).length >= 2;
+function countSections(text: string): number {
+  return (text.match(/^##\s+/gm) || []).length;
+}
+
+// Hollow/off-task detector: ZERO `##` sections AND very short means the leg almost certainly did not
+// write the report at all (e.g. it role-confused itself and returned a one-line "preflight blocked"
+// status). Both conditions must hold — a long heading-less report or a short one that kept a section
+// may still be usable content and stays a format_warning, never a drop.
+const HOLLOW_MAX_CHARS = 500;
+export function isHollowReport(text: string): boolean {
+  return countSections(text) === 0 && text.length < HOLLOW_MAX_CHARS;
 }
 
 // In `--json` mode codex reports API / model failures as JSON *events on stdout* (stderr stays empty),
@@ -156,7 +174,7 @@ export async function runCodexLeg(
   try {
     const res = await runProc(
       ["codex", ...buildCodexArgs(projectDir, outPath)],
-      { stdin: brief, timeoutMs, cwd: projectDir },
+      { stdin: `${CODEX_ROLE_PREAMBLE}\n\n${brief}`, timeoutMs, cwd: projectDir },
     );
     if (res.timedOut) throw new Error(`timed out after ${timeoutMs}ms`);
     if (res.code !== 0) {
@@ -178,13 +196,21 @@ export async function runCodexLeg(
       throw new Error(`could not read codex output: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
     }
     if (!text) throw new Error("empty final message");
+    // A hollow report is a DROP, not a warning: nothing here is usable by the critique, and feeding a
+    // one-line off-task status into it produces garbage synthesis. Thrown BEFORE putArtifact so the
+    // "codex_report is always a real report" invariant holds; a reason preview keeps it diagnosable.
+    if (isHollowReport(text)) {
+      throw new Error(
+        `hollow report (no ## sections, ${text.length} chars) — the leg likely went off-task: "${text.slice(0, 120)}"`,
+      );
+    }
     storage.putArtifact(db, runId, "codex_report", text);
     // Retry/resume case: a prior failed attempt may have stamped a drop reason on the row — clear it
     // now that a real report landed, so the run reads as healthy.
     storage.clearCodexFailure(db, runId);
     return {
       status: "ok",
-      formatWarning: !hasStructuredFormat(text),
+      formatWarning: countSections(text) < 2,
     };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
