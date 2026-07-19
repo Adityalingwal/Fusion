@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { useTempDirs } from "./helpers/temp";
+
+const tempDir = useTempDirs("fusion-codex-skill-test-");
 
 const root = resolve(import.meta.dir, "../codex/skills/fusion");
 const skillPath = resolve(root, "SKILL.md");
@@ -58,6 +62,9 @@ test("thin launcher resolves the shared runtime without a machine-specific path"
   expect(launcher).toContain('resolve(scriptDir, "../../../..")');
   expect(launcher).toContain('"plugin", "skills", "fusion", "fusion.ts"');
   expect(launcher).not.toContain("/Users/");
+  // Dev guard: the launcher (not SKILL.md prose) pins runs to the dev DB, overridable via FUSION_DB.
+  expect(launcher).toContain("fusion-dev.db");
+  expect(launcher).toContain("env.FUSION_DB ??=");
 
   const proc = Bun.spawn([process.execPath, launcherPath, "not-a-command"], {
     cwd: resolve(import.meta.dir, ".."),
@@ -75,6 +82,29 @@ test("thin launcher resolves the shared runtime without a machine-specific path"
     stderr: "ignore",
   });
   expect(await ignored.exited).toBe(1); // tracked/packageable: root scripts/ ignore must not swallow it
+});
+
+test("launcher defaults Codex-hosted commands to the dev DB, never the real fusion.db", async () => {
+  const fakeHome = await tempDir();
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    HOME: fakeHome,
+    USERPROFILE: fakeHome, // homedir() source on Windows
+  };
+  delete env.FUSION_DB; // the guard must kick in only when no explicit override exists
+
+  const proc = Bun.spawn([process.execPath, launcherPath, "list"], {
+    cwd: resolve(import.meta.dir, ".."),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+  expect(code).toBe(0);
+  // The run landed in the dev DB under the (fake) home — and never touched a real fusion.db.
+  expect(existsSync(join(fakeHome, ".fusion", "fusion-dev.db"))).toBe(true);
+  expect(existsSync(join(fakeHome, ".fusion", "fusion.db"))).toBe(false);
+  expect(stderr).not.toContain("shared runtime not found");
 });
 
 test("skill metadata is minimal and invokes $fusion", async () => {

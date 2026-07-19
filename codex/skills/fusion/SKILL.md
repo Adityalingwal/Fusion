@@ -22,6 +22,11 @@ bun <this-skill-directory>/scripts/fusion.ts <command> [options]
 Do not call repository-internal TypeScript files directly. The launcher locates the shared runtime
 without a username-specific absolute path.
 
+Dev-database guard: the launcher itself pins every Codex-hosted command to a separate dev database
+(`~/.fusion/fusion-dev.db`) unless `FUSION_DB` is already set in the environment. Do not set
+`FUSION_DB` manually and do not point runs at the real `~/.fusion/fusion.db`. (This guard is removed
+at launch.)
+
 ## Hard invariants
 
 - Complete targeted orientation before the starting advisor.
