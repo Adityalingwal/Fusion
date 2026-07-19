@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import * as storage from "../plugin/skills/fusion/storage";
-import { CODEX_ROLE_PREAMBLE } from "../plugin/skills/fusion/runner/codex";
+import { LEG_ROLE_PREAMBLE } from "../plugin/skills/fusion/runner/shared";
 import { FAKE_CODEX_REPORT, makeFakeBin, readLogs, runBun } from "./helpers/fake-cli";
 import { useTempDirs } from "./helpers/temp";
 
@@ -54,7 +54,7 @@ test("runner sets project cwd and stores reports without metadata", async () => 
   // The relay prompt = role preamble + blank line + the EXACT brief; the stored brief artifact above
   // stays preamble-free.
   expect(codex.stdinPreview.startsWith("[Fusion leg role")).toBe(true);
-  expect(codex.stdinLength).toBe(CODEX_ROLE_PREAMBLE.length + 2 + hugeBrief.length);
+  expect(codex.stdinLength).toBe(LEG_ROLE_PREAMBLE.length + 2 + hugeBrief.length);
   expect(codex.args).toContain("-C");
   expect(codex.args).toContain(project);
   // No -m: model comes from the user's ~/.codex/config.toml, not a fusion override.

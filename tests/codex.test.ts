@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { actionableHint, classifyCodexFailure, isHollowReport } from "../plugin/skills/fusion/runner/codex";
+import { actionableHint, classifyCodexFailure } from "../plugin/skills/fusion/runner/codex";
+import { isHollowReport } from "../plugin/skills/fusion/runner/shared";
 
 // classifyCodexFailure is pure string → category, so it is tested directly against the reason
 // strings runner/codex.ts actually produces (extractCodexError / actionableHint / timeout / spawn).

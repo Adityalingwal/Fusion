@@ -1,10 +1,11 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 
-// Default fake report: structured (two ## sections) so it clears the runner's hollow-report detector,
-// mirroring what a healthy codex leg actually returns. Tests that need a degenerate report override
-// via FAKE_CODEX_OUTPUT.
+// Default fake reports: structured (two ## sections) so they clear the runner's hollow-report
+// detector, mirroring what a healthy leg actually returns. Tests that need a degenerate report
+// override via FAKE_CODEX_OUTPUT / FAKE_CLAUDE_OUTPUT.
 export const FAKE_CODEX_REPORT = "## Plan\ncodex ok\n\n## Risks\nnone";
+export const FAKE_CLAUDE_REPORT = "## Plan\nclaude ok\n\n## Risks\nnone";
 
 export async function makeFakeBin(root: string): Promise<{ bin: string; log: string }> {
   const bin = join(root, "bin");
@@ -93,7 +94,7 @@ if (args.includes("-p") || args.includes("--print")) {
   const delay = Number(process.env.FAKE_CLAUDE_SLEEP_MS || "0");
   if (delay > 0) await Bun.sleep(delay);
   if (process.env.FAKE_CLAUDE_STDERR) console.error(process.env.FAKE_CLAUDE_STDERR);
-  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CLAUDE_OUTPUT ?? "claude ok");
+  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CLAUDE_OUTPUT ?? ${JSON.stringify(FAKE_CLAUDE_REPORT)});
   if (output) console.log(output);
   process.exit(Number(process.env.FAKE_CLAUDE_EXIT || "0"));
 }

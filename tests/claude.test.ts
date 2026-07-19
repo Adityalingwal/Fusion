@@ -3,6 +3,7 @@ import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import * as storage from "../plugin/skills/fusion/storage";
 import { classifyClaudeFailure } from "../plugin/skills/fusion/runner/claude";
+import { LEG_ROLE_PREAMBLE } from "../plugin/skills/fusion/runner/shared";
 import { makeFakeBin, readLogs, runBun } from "./helpers/fake-cli";
 import { useTempDirs } from "./helpers/temp";
 
@@ -27,7 +28,7 @@ async function fixture() {
   return { root, bin, log, project, dbFile, args };
 }
 
-test("Claude relay sends only the brief with planning-safe one-shot flags and stores the report", async () => {
+test("Claude relay sends the role preamble + brief with planning-safe one-shot flags and stores the report", async () => {
   const f = await fixture();
   const result = await runBun(runnerPath, f.args, {
     cwd: f.project,
@@ -47,7 +48,11 @@ test("Claude relay sends only the brief with planning-safe one-shot flags and st
 
   const invocation = (await readLogs(f.log)).find((entry) => entry.tool === "claude")!;
   expect(invocation.cwd).toBe(await realpath(f.project));
-  expect(invocation.stdinPreview).toBe("Plan the bridge");
+  // The relay prompt = role preamble + blank line + the EXACT brief; the stored brief artifact
+  // stays preamble-free.
+  expect(invocation.stdinPreview.startsWith("[Fusion leg role")).toBe(true);
+  expect(invocation.stdinLength).toBe(LEG_ROLE_PREAMBLE.length + 2 + "Plan the bridge".length);
+  expect(storage.getArtifact(storage.open(), "claude-run", "brief")).toBe("Plan the bridge");
   expect(invocation.args).toEqual(["-p", "--permission-mode", "plan", "--no-session-persistence"]);
   for (const forbidden of ["--model", "--system-prompt", "--append-system-prompt", "--safe-mode", "--tools", "--bg"]) {
     expect(invocation.args).not.toContain(forbidden);
@@ -118,6 +123,55 @@ test("Claude spawn failure is fixable and stores no placeholder", async () => {
   process.env.FUSION_DB = f.dbFile;
   expect(storage.getArtifact(storage.open(), "claude-run", "claude_report")).toBeNull();
   expect(classifyClaudeFailure("spawn claude ENOENT")).toBe("fixable");
+});
+
+test("Claude relay drop: a hollow off-task report fails as transient with a REDACTED reason", async () => {
+  const f = await fixture();
+  // The real incident shape (run d7eed0a0): the leg role-confused itself into being the Fusion host
+  // and returned a one-line fake status instead of a report.
+  const hollow = "preflight blocked: run `claude auth login` first, then re-run the fusion CLI.";
+  const result = await runBun(runnerPath, f.args, {
+    cwd: f.project,
+    bin: f.bin,
+    log: f.log,
+    env: { FUSION_DB: f.dbFile, FAKE_CLAUDE_OUTPUT: hollow },
+  });
+
+  expect(result.code).toBe(0);
+  const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(receipt).toMatchObject({ runId: "claude-run", claudeAvailable: false, category: "transient" });
+  expect(receipt.reason).toContain("hollow report");
+  // Unlike the codex leg there is NO text preview: provider output must never reach the blind
+  // Codex host through a failure reason. Neither stream may carry it either.
+  expect(receipt.reason).not.toContain("preflight blocked");
+  expect(result.stderr).not.toContain("preflight blocked");
+
+  process.env.FUSION_DB = f.dbFile;
+  const details = storage.getRunDetails(storage.open(), "claude-run");
+  // The invariant holds: a hollow report never lands as a claude_report artifact.
+  expect(details.claudeReport).toBeNull();
+  expect(details.claudeFailReason).toContain("hollow report");
+  expect(details.claudeFailReason).not.toContain("preflight blocked");
+  expect(details.claudeFailCategory).toBe("transient");
+  expect(classifyClaudeFailure(details.claudeFailReason!)).toBe("transient");
+});
+
+test("Claude relay warns (not drops) on a LONG heading-less report", async () => {
+  const f = await fixture();
+  const longProse = `A detailed plan without markdown headings. ${"detail ".repeat(120)}`.trim();
+  const result = await runBun(runnerPath, f.args, {
+    cwd: f.project,
+    bin: f.bin,
+    log: f.log,
+    env: { FUSION_DB: f.dbFile, FAKE_CLAUDE_OUTPUT: longProse },
+  });
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toContain("format_warning");
+  const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(receipt).toEqual({ runId: "claude-run", claudeAvailable: true });
+  process.env.FUSION_DB = f.dbFile;
+  expect(storage.getRunDetails(storage.open(), "claude-run").claudeReport).toBe(longProse);
 });
 
 test("Claude retry success clears the previous safe failure metadata", async () => {

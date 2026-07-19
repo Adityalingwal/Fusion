@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import * as storage from "../storage";
 import { lastStderr, runProc } from "../lib/subprocess";
+import { LEG_ROLE_PREAMBLE, countSections, isHollowReport } from "./shared";
 
 import type { ClaudeFailCategory } from "../storage";
 
@@ -29,7 +30,9 @@ export function classifyClaudeFailure(reason: string): ClaudeFailCategory {
   ) {
     return "fixable";
   }
-  if (/timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/.test(value)) {
+  // Likely to succeed on a plain retry: timeouts, network blips, 5xx — and a hollow/off-task report
+  // (the model wandered; the same relay usually lands on retry, verified live on run d7eed0a0).
+  if (/hollow report|timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/.test(value)) {
     return "transient";
   }
   return "unknown";
@@ -51,10 +54,6 @@ export function claudeActionableHint(message: string): string {
   return message;
 }
 
-function hasStructuredFormat(text: string): boolean {
-  return (text.match(/^##\s+/gm) || []).length >= 2;
-}
-
 function safeClaudeFailureReason(code: number | null, category: ClaudeFailCategory): string {
   const prefix = code === null ? "claude could not start" : `claude exited ${code}`;
   const summary: Record<ClaudeFailCategory, string> = {
@@ -74,8 +73,10 @@ export async function runClaudeLeg(
   timeoutMs: number,
 ): Promise<ClaudeLegResult> {
   try {
+    // Role preamble rides the relayed stdin ONLY — the stored `brief` artifact stays exactly what
+    // the host wrote (see runner/shared.ts).
     const result = await runProc(["claude", ...buildClaudeArgs()], {
-      stdin: brief,
+      stdin: `${LEG_ROLE_PREAMBLE}\n\n${brief}`,
       timeoutMs,
       cwd: projectDir,
     });
@@ -102,9 +103,19 @@ export async function runClaudeLeg(
       storage.recordClaudeFailure(db, runId, reason, "unknown");
       return { status: "failed", reason, category: "unknown" };
     }
+    // A hollow report is a DROP, not a warning: nothing here is usable by the critique. Checked
+    // BEFORE putArtifact so the "claude_report is always a real report" invariant holds. Unlike the
+    // codex leg, the reason carries NO text preview — this file's redaction rule (the blind Codex
+    // host must never see provider content before saving its own report) outranks diagnosability,
+    // so only the char count travels.
+    if (isHollowReport(text)) {
+      const reason = `hollow report (no ## sections, ${text.length} chars) — the leg likely went off-task; retry`;
+      storage.recordClaudeFailure(db, runId, reason, "transient");
+      return { status: "failed", reason, category: "transient" };
+    }
     storage.putArtifact(db, runId, "claude_report", text);
     storage.clearClaudeFailure(db, runId);
-    return { status: "ok", formatWarning: !hasStructuredFormat(text) };
+    return { status: "ok", formatWarning: countSections(text) < 2 };
   } catch (error) {
     // Unexpected failures may also carry provider output in an exception message. Keep the raw
     // message local for classification and expose only a stable, report-free summary.

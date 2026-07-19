@@ -136,7 +136,7 @@ test("relay resumes in the run's stored project and rejects an explicit differen
   storage.ensureProject(db, projA);
   storage.startRun(db, { runId: "stored-project", projectId: projA.id, hostModel: "codex" });
   storage.putArtifact(db, "stored-project", "brief", "resume in project A");
-  const common = { cwd: projectB, bin, log, env: { FUSION_DB: dbFile, FAKE_CLAUDE_OUTPUT: "claude from A" } };
+  const common = { cwd: projectB, bin, log, env: { FUSION_DB: dbFile, FAKE_CLAUDE_OUTPUT: "## Plan\nclaude from A\n\n## Risks\nnone" } };
 
   const resumed = await runBun(fusionPath, ["relay", "--run-id", "stored-project"], common);
   expect(resumed.code).toBe(0);
