@@ -53,8 +53,56 @@ function openConfigured(path: string): Database {
 
 const SCHEMA_VERSION = 2;
 
+// Every column this build's queries touch, per table. A DB stamped with a NEWER schema version is
+// still usable as long as these all exist — the schema contract is additive-only, so an older CLI
+// must keep working against a migrated DB instead of hard-failing on the version number (a dev
+// build once migrated the shared DB and locked the installed CLI out of every command).
+const REQUIRED_COLUMNS: Record<string, readonly string[]> = {
+  projects: ["id", "name", "root_path", "created_at"],
+  runs: [
+    "id",
+    "project_id",
+    "title",
+    "status",
+    "created_at",
+    "host_model",
+    "brief",
+    "claude_report",
+    "codex_report",
+    "plan",
+    "codex_fail_reason",
+    "codex_fail_category",
+    "claude_fail_reason",
+    "claude_fail_category",
+  ],
+};
+
 function schemaVersion(db: Database): number {
   return (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+}
+
+// Why a newer-versioned DB can NOT be used by this build, or null when it can. Checks both
+// directions of the additive contract: every column we read/write still exists, and every column we
+// don't know about is nullable or defaulted (otherwise our INSERTs would fail).
+function forwardIncompatibility(db: Database): string | null {
+  for (const [table, required] of Object.entries(REQUIRED_COLUMNS)) {
+    const columns = db.query(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }>;
+    if (columns.length === 0) return `missing table '${table}'`;
+    const names = new Set(columns.map((column) => column.name));
+    for (const name of required) {
+      if (!names.has(name)) return `table '${table}' is missing column '${name}'`;
+    }
+    for (const column of columns) {
+      if (!required.includes(column.name) && column.notnull === 1 && column.dflt_value === null) {
+        return `table '${table}' column '${column.name}' is NOT NULL without a default`;
+      }
+    }
+  }
+  return null;
 }
 
 function createCurrentSchema(db: Database): void {
@@ -112,6 +160,19 @@ function migrateV1ToV2(db: Database): void {
 
 function initSchema(db: Database): void {
   const version = schemaVersion(db);
+  if (version > SCHEMA_VERSION) {
+    const problem = forwardIncompatibility(db);
+    if (problem) {
+      throw new Error(
+        `Fusion DB schema version ${version} is newer than this CLI supports (${SCHEMA_VERSION}) ` +
+          `and not additively compatible: ${problem}. Update the fusion plugin, or set FUSION_DB ` +
+          `to a different database file.`,
+      );
+    }
+    // Newer but additive — use it as-is. Never re-stamp user_version here: writing our older
+    // number back would make the newer CLI re-run its migration against already-migrated tables.
+    return;
+  }
   if (version === 1) {
     migrateV1ToV2(db);
     return;

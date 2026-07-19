@@ -159,7 +159,9 @@ test("concurrent v1 opens converge on one complete v2 migration", async () => {
   );
 });
 
-test("a DB stamped with an unknown schema version refuses to open instead of running against it", async () => {
+test("a newer-stamped DB without the tables this build needs refuses to open", async () => {
+  // user_version says "newer schema" but the required tables are absent — forward-compat must not
+  // blindly trust the stamp; it verifies the additive contract and refuses with a clear message.
   const dir = await makeTempDir();
   const dbFile = join(dir, "stale.db");
   const oldDb = new Database(dbFile, { create: true });
@@ -167,7 +169,86 @@ test("a DB stamped with an unknown schema version refuses to open instead of run
   oldDb.close();
   process.env.FUSION_DB = dbFile;
 
-  expect(() => storage.open()).toThrow("unsupported Fusion DB schema version 3");
+  expect(() => storage.open()).toThrow(/newer than this CLI supports.*missing table 'projects'/);
+});
+
+// Build a DB the way a NEWER CLI would: current schema plus additive extras, stamped with a higher
+// user_version. mutate lets each test bolt on its own extra DDL before the stamp.
+async function newerSchemaDb(mutate: (db: Database) => void): Promise<string> {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "fusion.db");
+  process.env.FUSION_DB = dbFile;
+  storage.open(); // builds the current (v2) schema
+  storage.closeAll();
+  const raw = new Database(dbFile);
+  mutate(raw);
+  raw.exec("PRAGMA user_version = 3;");
+  raw.close();
+  return dbFile;
+}
+
+test("an additively-migrated newer DB stays fully usable and its version stamp is not downgraded", async () => {
+  // The real lockout: a dev build migrated the shared DB forward (new defaulted/nullable columns)
+  // and the installed older CLI then hard-failed every command. With forward-compatible reads the
+  // older CLI must keep working against exactly that shape — here a hypothetical v3.
+  const dbFile = await newerSchemaDb((raw) => {
+    raw.exec(`
+      ALTER TABLE runs ADD COLUMN review_report TEXT;
+      ALTER TABLE runs ADD COLUMN review_verdict TEXT NOT NULL DEFAULT 'pending';
+    `);
+  });
+
+  const db = storage.open();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x/proj" });
+  storage.startRun(db, { runId: "r1", projectId: "p1", title: "Cross-version run" });
+  storage.putArtifact(db, "r1", "plan", "the plan");
+  storage.finishRun(db, "r1");
+  const detail = storage.getRunDetails(db, "r1");
+  expect(detail.plan).toBe("the plan");
+  expect(detail.status).toBe("completed");
+
+  // The newer CLI's stamp must survive — re-stamping our older number would make the newer CLI
+  // re-run its migration.
+  storage.closeAll();
+  const raw = new Database(dbFile);
+  expect((raw.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3);
+  raw.close();
+});
+
+test("a newer DB that dropped a required column refuses to open with the column named", async () => {
+  await newerSchemaDb((raw) => {
+    raw.exec(`ALTER TABLE runs DROP COLUMN codex_fail_reason;`);
+  });
+  expect(() => storage.open()).toThrow(/missing column 'codex_fail_reason'/);
+});
+
+test("a newer DB with an unknown NOT NULL column without a default refuses to open", async () => {
+  // Such a column would break this build's INSERTs at write time — fail up front instead. SQLite
+  // can't ADD COLUMN NOT NULL without a default, so rebuild the table the way a future migration
+  // might.
+  await newerSchemaDb((raw) => {
+    raw.exec(`
+      DROP TABLE runs;
+      CREATE TABLE runs (
+        id                   TEXT PRIMARY KEY,
+        project_id           TEXT NOT NULL REFERENCES projects(id),
+        title                TEXT NOT NULL DEFAULT 'Untitled run',
+        status               TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
+        created_at           TEXT NOT NULL,
+        host_model           TEXT NOT NULL DEFAULT 'claude',
+        brief                TEXT,
+        claude_report        TEXT,
+        codex_report         TEXT,
+        plan                 TEXT,
+        codex_fail_reason    TEXT,
+        codex_fail_category  TEXT,
+        claude_fail_reason   TEXT,
+        claude_fail_category TEXT,
+        strict_col           TEXT NOT NULL
+      );
+    `);
+  });
+  expect(() => storage.open()).toThrow(/NOT NULL without a default/);
 });
 
 test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a run row", async () => {
