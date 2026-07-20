@@ -124,7 +124,6 @@ export function buildCodexArgs(projectDir: string, outPath: string): string[] {
   return [
     "exec",
     "--json",
-    "--ephemeral",
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
