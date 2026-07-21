@@ -43,16 +43,12 @@ Open Claude Code **in your terminal**, then run these commands one by one:
 
 ## Staying up to date
 
-Fusion improves over time. To get the latest version:
+Fusion improves over time. To stay up to date with the latest version, copy and run these commands directly in your terminal:
 
-**In the terminal:**
-
-1. Run `/plugins`, open the **Installed** tab, select **fusion**, and click **Update now**.
-
-**In the desktop app:**
-
-1. Open **Settings → Plugins**.
-2. Click **Fusion**, then click the **Update** button.
+```bash
+claude plugin marketplace update fusion
+claude plugin update fusion@fusion
+```
 
 That's it — the update applies right away, no restart needed. See [CHANGELOG.md](CHANGELOG.md) for what's new in the latest version.
 
