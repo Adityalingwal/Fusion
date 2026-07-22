@@ -8,13 +8,16 @@
   line-height: 1.75;
   color: #2E2D2A;
   text-rendering: optimizeLegibility;
+  overflow-wrap: anywhere;
 }
 
-/* Cap the measure: past ~75 characters per line the eye loses the return sweep and reading
-   slows down. Children are capped — not the container — so the card's scrollbar stays on the
-   card edge instead of floating mid-card. */
+/* Reports are workspace documents, so every top-level block follows the live card width. The old
+   76ch reading-measure cap left a large dead column on desktop and prevented content from adapting
+   when the sidebar opened, closed, or the window was resized. Keep blocks bounded by the card while
+   allowing normal text to reflow across all available space. Wide tables and code blocks retain
+   their own horizontal scrolling rules below. */
 .markdown-content > * {
-  max-width: 76ch;
+  max-width: 100%;
 }
 
 .markdown-content > :first-child {

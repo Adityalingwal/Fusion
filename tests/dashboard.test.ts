@@ -371,6 +371,20 @@ test("dashboard gives each report its own tab and keeps scrolling on the outer c
   expect(layout).not.toContain(".sk-id");
 });
 
+test("dashboard markdown follows the full responsive card width", async () => {
+  const markdown = await Bun.file(
+    join(import.meta.dir, "../plugin/skills/fusion/dashboard/css/markdown.css"),
+  ).text();
+
+  // A fixed reading-measure cap made every artifact look congested on wide screens, regardless of
+  // whether the sidebar was open or closed. Top-level blocks must follow the card width, while long
+  // unbroken text still wraps instead of forcing the whole workspace to scroll horizontally.
+  expect(markdown).toContain(".markdown-content > *");
+  expect(markdown).toContain("max-width: 100%");
+  expect(markdown).toContain("overflow-wrap: anywhere");
+  expect(markdown).not.toMatch(/max-width:\s*76ch/);
+});
+
 test("identity + shutdown endpoints: identity is public, shutdown needs an injected handler", async () => {
   const identity = await handleRequest(
     new Request("http://localhost:38888/api/fusion-dashboard", { headers: { host: "localhost:38888" } }),
