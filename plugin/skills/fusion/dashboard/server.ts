@@ -145,6 +145,25 @@ export async function serveDashboardHtml(): Promise<Response> {
   });
 }
 
+// Turn a data-layer throw into a 500 JSON body + ONE clean console.error line, so a broken DB
+// (e.g. a schema stamped by a different plugin version) never escapes handleRequest as Bun's raw
+// code-frame dump. The schema-version mismatch gets an actionable message; anything else keeps the
+// underlying error text so the failure is still diagnosable from the page.
+function apiFailure(route: string, action: string, err: unknown): Response {
+  const message = err instanceof Error ? err.message : String(err);
+  let error: string;
+  const versionMatch = message.match(/^unsupported Fusion DB schema version (\d+)/);
+  if (versionMatch) {
+    error =
+      `Your Fusion database (version ${versionMatch[1]}) was created by a different plugin version — ` +
+      `update the plugin (/plugins → fusion → Update now), or delete ~/.fusion/fusion.db if you don't need the saved runs.`;
+  } else {
+    error = `Failed to ${action}: ${message}`;
+  }
+  console.error(`fusion dashboard: GET ${route} failed — ${error}`);
+  return Response.json({ error }, { status: 500 });
+}
+
 export async function handleRequest(req: Request): Promise<Response> {
   if (!hostAllowed(req)) {
     return new Response("Forbidden", { status: 403 });
@@ -172,14 +191,20 @@ export async function handleRequest(req: Request): Promise<Response> {
   }
 
   if (url.pathname === "/api/projects" && req.method === "GET") {
-    const list = await getProjects();
-    return Response.json(list);
+    try {
+      return Response.json(await getProjects());
+    } catch (err) {
+      return apiFailure("/api/projects", "load projects", err);
+    }
   }
 
   if (url.pathname === "/api/runs" && req.method === "GET") {
     const projectId = url.searchParams.get("projectId") ?? undefined;
-    const list = await getRuns(projectId);
-    return Response.json(list);
+    try {
+      return Response.json(await getRuns(projectId));
+    } catch (err) {
+      return apiFailure("/api/runs", "load runs", err);
+    }
   }
 
   const runMatch = url.pathname.match(/^\/api\/runs\/([^\/]+)$/);

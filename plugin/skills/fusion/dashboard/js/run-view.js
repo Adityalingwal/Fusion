@@ -90,7 +90,7 @@ async function selectRun(runId) {
       setTimeout(fetchData, 0); // deferred so the in-flight fetchData settles (fetchInFlight) before the retry
       return;
     }
-    ensureOk(res, 'Run details request');
+    await ensureOk(res, 'Run details request');
     const data = await res.json();
     if (selectedRunId !== runId) return; // re-check after the JSON await
     selectedRunData = data;

@@ -485,6 +485,60 @@ test("a foreign app on the port is never touched: probe says no, stop skips it, 
   }
 });
 
+test("a schema-version-mismatch DB makes the list APIs answer 500 + actionable JSON, never throw", async () => {
+  const root = await tempDir();
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  // Stamp a DB with a schema version this plugin build does not understand (as if written by a
+  // different plugin version). Built with bun:sqlite directly so storage.open()'s own version
+  // check is what trips at request time.
+  const dbFile = join(root, "future-schema.db");
+  const { Database } = await import("bun:sqlite");
+  const stamped = new Database(dbFile, { create: true });
+  stamped.exec("PRAGMA user_version = 3;");
+  stamped.close();
+  process.env.FUSION_DB = dbFile;
+  setProjectDir(project);
+
+  // The failure must reach the terminal as ONE clean console.error line, not an escaped exception.
+  const errorLines: string[] = [];
+  const realConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    errorLines.push(args.join(" "));
+  };
+  try {
+    const expected =
+      "Your Fusion database (version 3) was created by a different plugin version — " +
+      "update the plugin (/plugins → fusion → Update now), or delete ~/.fusion/fusion.db if you don't need the saved runs.";
+
+    const projects = await handleRequest(
+      new Request("http://localhost:38888/api/projects", { headers: { host: "localhost:38888" } }),
+    );
+    expect(projects.status).toBe(500);
+    expect(await projects.json()).toEqual({ error: expected });
+
+    const runs = await handleRequest(
+      new Request("http://localhost:38888/api/runs", { headers: { host: "localhost:38888" } }),
+    );
+    expect(runs.status).toBe(500);
+    expect(await runs.json()).toEqual({ error: expected });
+
+    expect(errorLines).toHaveLength(2); // one line per failed request, nothing else
+    expect(errorLines[0]).toContain("GET /api/projects failed");
+
+    // Any OTHER data-layer throw still gets a clean 500, with the underlying error text preserved.
+    process.env.FUSION_DB = root; // a directory is not openable as a SQLite file
+    const broken = await handleRequest(
+      new Request("http://localhost:38888/api/projects", { headers: { host: "localhost:38888" } }),
+    );
+    expect(broken.status).toBe(500);
+    const body = (await broken.json()) as { error: string };
+    expect(body.error).toStartWith("Failed to load projects: ");
+  } finally {
+    console.error = realConsoleError;
+  }
+});
+
 test("dashboard chooses the native browser launcher for each supported operating system", () => {
   const url = "http://localhost:38888";
   expect(browserOpenCommand("darwin", url)).toEqual(["open", url]);

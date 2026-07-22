@@ -61,9 +61,22 @@ function apiErrorMessage(action) {
   return `Could not ${action}. Check that the Fusion dashboard server is running for this project.`;
 }
 
-function ensureOk(response, label) {
+// On a failed response, prefer the server's own explanation: API error responses carry a JSON
+// { error } body (e.g. the unreadable-database message), which beats the generic "is the server
+// running" guess. The message is tagged on the thrown error as `serverMessage` so callers can tell
+// a server-explained persistent failure apart from a transient network blip.
+async function ensureOk(response, label) {
   if (!response.ok) {
-    throw new Error(`${label} failed with HTTP ${response.status}`);
+    let serverMessage = null;
+    try {
+      const body = await response.json();
+      if (body && typeof body.error === 'string') serverMessage = body.error;
+    } catch {
+      // Body was not JSON (proxy error page, empty body) — fall through to the generic message.
+    }
+    const err = new Error(serverMessage || `${label} failed with HTTP ${response.status}`);
+    if (serverMessage) err.serverMessage = serverMessage;
+    throw err;
   }
   return response;
 }

@@ -117,7 +117,7 @@ async function fetchRunsFor(projectId, { showLoader = true } = {}) {
   }
   try {
     const res = await fetch(`/api/runs?projectId=${encodeURIComponent(projectId)}`);
-    ensureOk(res, 'Runs request');
+    await ensureOk(res, 'Runs request');
     runsByProject[projectId] = await res.json();
     loadErrorProjects[projectId] = false;
   } catch (err) {
@@ -137,7 +137,7 @@ async function fetchData() {
   fetchInFlight = true;
   try {
     const res = await fetch('/api/projects');
-    ensureOk(res, 'Projects request');
+    await ensureOk(res, 'Projects request');
     projects = await res.json();
     consecutiveProjectLoadFailures = 0; // a good load clears the failure streak
 
@@ -170,7 +170,12 @@ async function fetchData() {
     // refreshes it. The full error screen is only for the "nothing has ever loaded" case, and only
     // once failures persist enough to mean the server is genuinely down — not a single blip.
     const treeAlreadyShown = projects.length > 0;
-    if (!treeAlreadyShown && consecutiveProjectLoadFailures >= PROJECT_LOAD_ERROR_THRESHOLD) {
+    // A server-explained failure (5xx with a JSON error body, e.g. an unreadable database) is
+    // persistent, not a poll blip — show the server's message right away instead of waiting out
+    // the transient-failure threshold with a blank sidebar.
+    if (!treeAlreadyShown && err && err.serverMessage) {
+      renderRunsError(err.serverMessage, { showRetry: true });
+    } else if (!treeAlreadyShown && consecutiveProjectLoadFailures >= PROJECT_LOAD_ERROR_THRESHOLD) {
       renderRunsError(apiErrorMessage('load dashboard data'), { showRetry: true });
     }
   } finally {
