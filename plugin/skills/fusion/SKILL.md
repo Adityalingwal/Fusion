@@ -19,6 +19,7 @@ written into the project directory. Talk to it only through the bundled CLI
 - `put --run-id <id> --type <brief|claude_report|codex_report|plan> --file <path>` — save content.
 - `get --run-id <id> --type <...>` — read content back (JSON `content` field).
 - `relay --run-id <id>` — launch the external Codex leg.
+- `advise --run-id <id>` — run the blind Codex advisor check on the saved plan draft (step 8).
 - `finish --run-id <id>` — mark the run completed (after the final plan is saved).
 - `export --run-id <id> --type plan --out docs/X.md` — write ONE committed doc, on demand.
 - `list` — JSON of interrupted runs (status `running`) across all projects, newest first, each with which artifacts exist + any GPT drop reason. Powers RESUME.
@@ -197,17 +198,45 @@ ONE short clarifying question. Never silently map a typed answer onto the neares
    Write ONE clean plan (not an append-pile of "supersedes X" layers) to a **temp file** — this is the working
    copy through the next steps; it is **not** saved to the DB yet (that happens in step 8, then step 9).
 
-8. **Advisor (final-check) — MANDATORY; then save a durable draft.** Call `advisor()`.
-   Guide its ask (not a bare one-liner, not a rigid checklist): give it the **task + the plan** and ask it to check
-   task-fit plus the **danger-zones** — where your own leg won (justified or self-preference?) · a solo-authored
-   BOTH-MISS (sound, or should it go to the user?) · was a premise-split resolved honestly? · are weak
-   agreements tagged `[unverified]`? · anything wrongly dropped / kept? · any big risk all three of us missed —
-   **plus an open tail** ("anything else wrong, even if not listed"). If the plan carries a **⚠️ User-Challenge**,
-   the advisor weighs in (is the challenge fair?) but never overrides — the user's call stands. Fold its verdict
-   into what you'll show the user — **one call, no ping-pong loop**. **Fail-open:** if the advisor call errors /
-   times out, proceed without it — still save the draft below, and tell the user the advisor check didn't run.
-   **Then save a durable draft to the DB**
+8. **Advisor check (Codex) — then finalize the draft.** Write the
+   synthesized plan to a temp file and save the draft FIRST:
+   `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`
+   (advise reads everything from the DB — an unsaved plan makes it refuse.)
+
+   Then run the advisor in the BACKGROUND:
+   `bun "${CLAUDE_SKILL_DIR}/fusion.ts" advise --run-id <run-id>`
+   The runner assembles the packet itself — do NOT build or edit the
+   advisor prompt, and do NOT pass it any content.
+   Its last stdout line is JSON: `advisorAvailable`, `mode`
+   (dual | single | single-degraded), and on a drop a `reason`.
+   While it runs, do not show the plan or ask any decisions — continue
+   only when the summary arrives.
+
+   - **advisorAvailable: false** → fail-open: continue to step 9 with one
+     plain line for the user — "the advisor check didn't run (<reason>)".
+     NO retry menu; if the user asks, re-run `advise` once.
+   - **advisorAvailable: true** → read the verdict:
+     `bun "${CLAUDE_SKILL_DIR}/fusion.ts" get --run-id <run-id> --type advisor_report`
+
+   Fold the verdict — verify before you trust:
+   - BLOCKER and MAJOR findings: verify each one yourself against the
+     repo/docs before acting. Confirmed → fold the fix into the plan.
+     Wrong → drop it, and note why in one line. Needs the user → move it
+     to the user-decisions list.
+   - MINOR findings: read each one; fold without deep verification (they
+     are wording/polish). If a "minor" would actually change a decision
+     or behavior, treat it as MAJOR and verify.
+   - When the advisor sides with or revives REPORT A's (codex leg's)
+     position, verify that evidence extra-skeptically — the advisor and
+     that report come from the same model family.
+   - A malformed verdict (no VERDICT line) is never folded.
+
+   Update the temp file with the folded fixes and re-save the draft:
    `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`.
+   Then proceed to step 9. Do not show the advisor's verdict or counts to
+   the user; surface only the user-decisions with the plan (the advisor
+   display rule in the Shared finalize menu below). If the user later asks
+   what the advisor said, fetch it via `get --type advisor_report`.
 
 9. **Show the user → finalize.** **Lead with Council Health `2/2 Full`** (both legs synthesized). *(A `1/2`
     single-model result never reaches this step — it is finished via the Single-model branch below, under its
@@ -216,11 +245,13 @@ ONE short clarifying question. Never silently map a typed answer onto the neares
     Then apply the **Shared finalize menu** (below) — advisor display rule + Approve / Discard / corrections.
 
 ### Shared: the finalize menu (used by step 9 and the Single-model branch)
-- **Advisor display rule** — the advisor's fixes were already folded into the plan before this point, so its
-  routine verdict is NOT shown: show the plan clean. Only two things ever surface: if the advisor call
-  **failed/timed out**, add one plain line ("the advisor check didn't run — this plan is un-reviewed by it");
-  if an advisor catch **needs a user decision** (not a fix you could fold in), surface it as a short note
-  beside the plan. Never dump the routine verdict.
+- **Advisor display rule** — the advisor's confirmed fixes were already folded into the plan in step 8, so
+  on **success nothing advisor-related is shown**: the user sees only the final plan (fixes folded) with any
+  advisor-raised **user-decisions inline** beside it. On **failure** (`advisorAvailable: false`), exactly one
+  plain line: "the advisor check didn't run (<reason>)" — NO retry menu; re-run `advise` only if the user
+  asks. **On demand** — if the user asks what the advisor said or what was dropped — fetch the raw verdict
+  via `bun "${CLAUDE_SKILL_DIR}/fusion.ts" get --run-id <run-id> --type advisor_report` and show it; dropped
+  findings are NOT shown by default.
 - **The menu** — **ask via the question UI** — exactly two options + the built-in free-text box:
   **[Approve — finalize the plan]** · **[Discard — drop this run]**.
   - **Approve** → **re-save the final plan to the DB** (synchronous, overwrites the draft)
@@ -240,9 +271,11 @@ There is one leg, so critique + synthesis (steps 6–7) are meaningless and **SK
 1. **Self-check your own leg against the brief** — every Open decision addressed? Locked constraints respected?
    risky Premises examined? Premises actually verified? Fix any gaps in your leg first.
 2. **Reformat your leg as ONE plan** (the step-7 plan shape) in a temp file — one clean plan, not an append-pile.
-3. **Advisor (mandatory)** — same as step 8: give it the task + the plan, danger-zones + an open tail; fold in its
-   verdict. Then save a durable draft:
-   `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`.
+3. **Advisor (mandatory)** — same mechanism as step 8: save the durable draft FIRST
+   `bun "${CLAUDE_SKILL_DIR}/fusion.ts" put --run-id <run-id> --type plan --file <temp>`, then run
+   `bun "${CLAUDE_SKILL_DIR}/fusion.ts" advise --run-id <run-id>` in the BACKGROUND — with no
+   `codex_report` in the DB it auto-selects single mode (brief + plan only). Fold the verdict with
+   step 8's fold rules and re-save the draft; fail-open on a drop (one plain line, no retry menu).
 4. **Present under a loud banner:** `⚠️ Single-model plan — no council cross-check (GPT dropped: <reason>)`. Show
    the plan clean under the banner (no per-line `[unverified]` spam — the banner labels the whole plan as
    single-model).
@@ -274,7 +307,11 @@ session itself died mid-run. Which artifacts exist in the DB tells you where it 
    - **brief + codex_report, no claude_report** → **write your own leg FIRST, blind** — the CLI refuses
      `get --type codex_report` until you save `claude_report` (that's intentional) — then continue at step 6.
    - **both legs, no plan** → critique (step 6) → synthesis onward.
-   - **plan draft, not finished** → present / finalize (step 9).
+   - **plan draft, no advisor_report** → run `advise` (step 8) → fold → present / finalize (step 9).
+   - **plan draft + advisor_report** → fold-vs-rerun is decided by VALIDITY, not mere presence: if
+     `advisorFailReason` is null in `status`, the stored verdict is valid → fold it (step 8's fold rules)
+     → finalize; if `advisorFailReason` is set (timeout / malformed / …), do NOT fold — re-run `advise`
+     and fold only the fresh valid verdict.
 3. **Give up instead?** `bun "${CLAUDE_SKILL_DIR}/fusion.ts" abort --run-id <id>` marks it aborted so it stops
    showing up in `list`.
 
