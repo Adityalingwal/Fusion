@@ -16,26 +16,30 @@ export interface LegResult {
   formatWarning?: boolean;
 }
 
+// The four recognizable codex-failure fingerprints, defined ONCE and shared by every message
+// mapper (classifyCodexFailure + actionableHint here, advisorFailureReason in runner/advisor.ts).
+// The message TEXT stays per-caller — only the raw detection patterns are shared, so a future
+// pattern tweak can never drift between the three.
+export const QUOTA_PATTERN = /insufficient credit|usage limit|quota|\b429\b|too many requests|rate limit/i;
+export const NOT_INSTALLED_PATTERN = /executable not found|not found in \$?path|\benoent\b|no such file/i;
+export const STALE_CLI_PATTERN = /newer version of codex|requires a newer version|upgrade the cli|unexpected argument|unrecognized option/i;
+export const NOT_LOGGED_IN_PATTERN = /not logged in|not authenticated|unauthorized|\b401\b/i;
+
 // Classify a Codex drop reason so the skill can offer only the choices that make sense for it
 // (retry / resume-later / fix / single-model / abort). Pure string → string, so it is unit-tested
 // directly against the reason strings this file already produces (via extractCodexError /
 // actionableHint / timeout / spawn errors). Order matters: quota is checked before the generic
 // rate/5xx transient bucket so a 429 lands as quota, not transient.
 export function classifyCodexFailure(reason: string): CodexFailCategory {
-  const r = reason.toLowerCase();
   // Out of credits / hit a usage or rate cap → retrying now just fails again; the user must wait.
-  if (/insufficient credit|usage limit|rate limit|\b429\b|too many requests|quota/.test(r)) return "quota";
+  if (QUOTA_PATTERN.test(reason)) return "quota";
   // A concrete, user-fixable setup problem: not authed, or a stale/absent CLI (the last two should be
   // pre-caught by preflight, but classify them anyway for a mid-run relay that regressed).
-  if (
-    /not logged in|not authenticated|unauthorized|\b401\b|newer version of codex|requires a newer version|upgrade the cli|unexpected argument|unrecognized option|executable not found|not found in \$?path|\benoent\b|no such file/.test(
-      r,
-    )
-  ) {
+  if (NOT_LOGGED_IN_PATTERN.test(reason) || STALE_CLI_PATTERN.test(reason) || NOT_INSTALLED_PATTERN.test(reason)) {
     return "fixable";
   }
   // Likely to succeed on a plain retry: timeouts, network blips, 5xx.
-  if (/timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/.test(r)) {
+  if (/timed out|timeout|network|connection|econn|socket|stream error|\b5(?:00|02|03|04)\b|server error/i.test(reason)) {
     return "transient";
   }
   return "unknown";
@@ -90,22 +94,22 @@ export function actionableHint(message: string): string {
   // Out of credits / usage cap / rate-limited (429). Retrying now would just fail again — the model
   // quota has to reset first, so the "fix" is to wait, not a command. (Named "GPT" — it's the model,
   // not the CLI tool.)
-  if (/insufficient credit|usage limit|quota|\b429\b|too many requests|rate limit/i.test(message)) {
+  if (QUOTA_PATTERN.test(message)) {
     return `${message}\n  → Your GPT usage limit is exhausted — wait for it to reset, then run /fusion again.`;
   }
   // Codex not installed / not on PATH (spawn ENOENT). Only the npm global CLI is usable — the
   // ChatGPT-app binary isn't on PATH — so the fix is always the global install + login.
-  if (/executable not found|not found in \$?path|\benoent\b|no such file/i.test(message)) {
+  if (NOT_INSTALLED_PATTERN.test(message)) {
     return `${message}\n  → Codex isn't installed (or not on PATH). Install it: npm i -g @openai/codex — then run: codex login`;
   }
   // Stale PATH `codex`: it either announces "requires a newer version", or its argv parser rejects a
   // flag the runner passes ("unexpected argument" / "unrecognized option") because the installed CLI
   // predates it — both mean the same fix: update the CLI.
-  if (/newer version of codex|requires a newer version|upgrade the cli|unexpected argument|unrecognized option/i.test(message)) {
+  if (STALE_CLI_PATTERN.test(message)) {
     return `${message}\n  → Your codex CLI is incompatible/stale. Fix: npm i -g @openai/codex@latest`;
   }
   // Present but unauthenticated (kept distinct from a 400 credits/quota error, which is self-explanatory).
-  if (/not logged in|not authenticated|unauthorized|\b401\b/i.test(message)) {
+  if (NOT_LOGGED_IN_PATTERN.test(message)) {
     return `${message}\n  → Run: codex login`;
   }
   return message;

@@ -318,7 +318,7 @@ test("list/status/abort power the resume flow", async () => {
   const runs = json(list.stdout).runs;
   expect(runs).toHaveLength(1);
   expect(runs[0].runId).toBe("resumable");
-  expect(runs[0].artifacts).toEqual({ brief: true, claudeReport: false, codexReport: false, plan: false });
+  expect(runs[0].artifacts).toEqual({ brief: true, claudeReport: false, codexReport: false, plan: false, advisorReport: false });
 
   // status returns the same shape for one run.
   const status = await runBun(fusionPath, ["status", "--run-id", "resumable"], common);
@@ -343,6 +343,177 @@ test("list/status/abort power the resume flow", async () => {
   expect(finishAborted.stdout).toBe("");
   expect(finishAborted.stderr).toContain("cannot complete an aborted run");
   expect(json((await runBun(fusionPath, ["status", "--run-id", "resumable"], common)).stdout).run.status).toBe("aborted");
+});
+
+test("advise runs the advisor from the run's stored project dir (never the invocation cwd) and reports mode + verdict", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const elsewhere = join(root, "elsewhere");
+  const dbFile = join(root, "advise.db");
+  await mkdir(project, { recursive: true });
+  await mkdir(elsewhere, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "advise-run", projectId: proj.id });
+  storage.putArtifact(db, "advise-run", "brief", "the brief");
+  storage.putArtifact(db, "advise-run", "claude_report", "claude leg");
+  storage.putArtifact(db, "advise-run", "codex_report", "codex leg");
+  storage.putArtifact(db, "advise-run", "plan", "the plan");
+
+  // Invoked from a DIFFERENT directory: the runner must resolve projectDir from the DB, not cwd.
+  const advise = await runBun(fusionPath, ["advise", "--run-id", "advise-run"], {
+    cwd: elsewhere,
+    bin,
+    log,
+    env: { FUSION_DB: dbFile, FAKE_CODEX_OUTPUT: "CONCERNS\n- None\n\nVERDICT: APPROVE" },
+  });
+  expect(advise.code).toBe(0);
+  const summary = json(advise.stdout);
+  expect(summary.ok).toBe(true);
+  expect(summary.command).toBe("advise");
+  expect(summary.advisorAvailable).toBe(true);
+  expect(summary.mode).toBe("dual");
+  expect(summary.verdict).toBe("APPROVE");
+
+  const codex = (await readLogs(log)).find((entry) => entry.tool === "codex" && entry.args[0] === "exec")!;
+  expect(codex.cwd).toBe(await realpath(project)); // projectDir from the DB, not the invocation cwd
+  expect(codex.args[codex.args.indexOf("-C") + 1]).toBe(proj.root);
+
+  expect(storage.getArtifact(db, "advise-run", "advisor_report")).toContain("VERDICT: APPROVE");
+});
+
+test("advise fail-open: a codex drop still exits 0 with advisorAvailable:false + reason + category", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "advise-drop.db");
+  await mkdir(project, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "drop-run", projectId: proj.id });
+  storage.putArtifact(db, "drop-run", "brief", "the brief");
+  storage.putArtifact(db, "drop-run", "plan", "the plan");
+
+  const advise = await runBun(fusionPath, ["advise", "--run-id", "drop-run"], {
+    cwd: project,
+    bin,
+    log,
+    env: { FUSION_DB: dbFile, FAKE_CODEX_EXIT: "1", FAKE_CODEX_ERROR: "429 too many requests" },
+  });
+  expect(advise.code).toBe(0); // fail-open by design — the flow continues without the advisor
+  const summary = json(advise.stdout);
+  expect(summary.ok).toBe(true);
+  expect(summary.advisorAvailable).toBe(false);
+  expect(summary.mode).toBe("single"); // no codex_report in the DB → single mode was selected
+  expect(summary.reason).toBe("GPT quota exhausted — re-run advise after it resets");
+  expect(summary.category).toBe("quota");
+});
+
+test("advise ordering guard: missing plan (or run) refuses with a JSON outcome and a non-zero exit", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "advise-guard.db");
+  await mkdir(project, { recursive: true });
+  const common = { cwd: project, bin, log, env: { FUSION_DB: dbFile } };
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "guard-run", projectId: proj.id });
+  storage.putArtifact(db, "guard-run", "brief", "the brief");
+
+  // brief present but NO plan → refuse, still as one JSON line (never a stderr-only error).
+  const noPlan = await runBun(fusionPath, ["advise", "--run-id", "guard-run"], common);
+  expect(noPlan.code).not.toBe(0);
+  const refused = json(noPlan.stdout);
+  expect(refused.ok).toBe(false);
+  expect(refused.advisorAvailable).toBe(false);
+  expect(refused.reason).toBe("plan missing — save the plan draft first");
+  expect(refused.category).toBe("fixable");
+
+  // Unknown run id → the same JSON refusal shape.
+  const ghost = await runBun(fusionPath, ["advise", "--run-id", "ghost"], common);
+  expect(ghost.code).not.toBe(0);
+  expect(json(ghost.stdout).reason).toContain("run not found");
+
+  // Nothing was spawned: neither refusal may reach codex.
+  expect((await readLogs(log)).filter((entry) => entry.tool === "codex")).toHaveLength(0);
+});
+
+test("advise ordering guard: missing brief refuses with its tailored reason", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "advise-brief-guard.db");
+  await mkdir(project, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "brief-guard-run", projectId: proj.id });
+  // Plan present but NO brief — the guard's third tailored refusal.
+  storage.putArtifact(db, "brief-guard-run", "plan", "the plan");
+
+  const refused = await runBun(fusionPath, ["advise", "--run-id", "brief-guard-run"], {
+    cwd: project,
+    bin,
+    log,
+    env: { FUSION_DB: dbFile },
+  });
+  expect(refused.code).not.toBe(0);
+  const outcome = json(refused.stdout);
+  expect(outcome.ok).toBe(false);
+  expect(outcome.advisorAvailable).toBe(false);
+  expect(outcome.reason).toBe("brief missing — save the brief first");
+  expect(outcome.category).toBe("fixable");
+  expect((await readLogs(log)).filter((entry) => entry.tool === "codex")).toHaveLength(0);
+});
+
+test("public put refuses the runner-owned advisor_report type", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "advisor-owned.db");
+  await mkdir(project, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "owned", projectId: proj.id });
+
+  const verdictFile = join(root, "verdict.md");
+  await writeFile(verdictFile, "VERDICT: APPROVE", "utf8");
+  const put = await runBun(
+    fusionPath,
+    ["put", "--run-id", "owned", "--type", "advisor_report", "--file", verdictFile],
+    { cwd: project, bin, log, env: { FUSION_DB: dbFile } },
+  );
+  expect(put.code).not.toBe(0);
+  expect(put.stdout).toBe("");
+  expect(put.stderr).toContain("advisor_report is runner-owned — run advise instead");
+  expect(storage.getArtifact(db, "owned", "advisor_report")).toBeNull();
+
+  // get stays open for advisor_report (the on-demand raw-verdict path) once the runner writes it.
+  storage.putArtifact(db, "owned", "advisor_report", "VERDICT: APPROVE");
+  const get = await runBun(fusionPath, ["get", "--run-id", "owned", "--type", "advisor_report"], {
+    cwd: project,
+    bin,
+    log,
+    env: { FUSION_DB: dbFile },
+  });
+  expect(get.code).toBe(0);
+  expect(json(get.stdout).content).toBe("VERDICT: APPROVE");
 });
 
 test("plugin-internal CLI rejects bad commands and SKILL.md uses only the cross-platform entrypoint", async () => {

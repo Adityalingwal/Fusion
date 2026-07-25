@@ -78,7 +78,7 @@ export function getProject(db: Database, id: string): Project | null {
   return { id: row.id, name: row.name ?? row.id, root: row.root_path ?? "" };
 }
 
-export const ARTIFACT_TYPES = ["brief", "claude_report", "codex_report", "plan"] as const;
+export const ARTIFACT_TYPES = ["brief", "claude_report", "codex_report", "plan", "advisor_report"] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 export const DEFAULT_RUN_TITLE = "Untitled run";
 
@@ -87,6 +87,7 @@ const artifactColumns: Record<ArtifactType, ArtifactType> = {
   claude_report: "claude_report",
   codex_report: "codex_report",
   plan: "plan",
+  advisor_report: "advisor_report",
 };
 
 export function parseArtifactType(value: string): ArtifactType {
@@ -137,6 +138,21 @@ export function clearCodexFailure(db: Database, runId: string): void {
   db.query(`UPDATE runs SET codex_fail_reason = NULL, codex_fail_category = NULL WHERE id = ?`).run(runId);
 }
 
+// The advisor's failure marker mirrors the Codex one (same categories — runner/codex.ts
+// classifyCodexFailure buckets both legs). A set advisor_fail_reason means the stored
+// advisor_report (if any) is NOT a valid verdict: resume decides fold-vs-rerun by this marker,
+// never by mere artifact presence.
+export function recordAdvisorFailure(db: Database, runId: string, reason: string, category: CodexFailCategory): void {
+  const res = db
+    .query(`UPDATE runs SET advisor_fail_reason = ?, advisor_fail_category = ? WHERE id = ?`)
+    .run(reason, category, runId);
+  if (res.changes === 0) console.error(`recordAdvisorFailure: matched no run — unknown id '${runId}'`);
+}
+
+export function clearAdvisorFailure(db: Database, runId: string): void {
+  db.query(`UPDATE runs SET advisor_fail_reason = NULL, advisor_fail_category = NULL WHERE id = ?`).run(runId);
+}
+
 export function putArtifact(db: Database, runId: string, type: ArtifactType, content: string): void {
   const column = artifactColumns[type];
   const res = db.query(`UPDATE runs SET ${column} = ? WHERE id = ?`).run(content, runId);
@@ -178,7 +194,8 @@ export function getRunDetails(db: Database, runId: string) {
   const run = db
     .query(
       `SELECT id, project_id, title, status, created_at, brief, claude_report, codex_report, plan,
-              codex_fail_reason, codex_fail_category
+              codex_fail_reason, codex_fail_category, advisor_report, advisor_fail_reason,
+              advisor_fail_category
        FROM runs WHERE id = ?`,
     )
     .get(runId) as
@@ -194,6 +211,9 @@ export function getRunDetails(db: Database, runId: string) {
         plan: string | null;
         codex_fail_reason: string | null;
         codex_fail_category: string | null;
+        advisor_report: string | null;
+        advisor_fail_reason: string | null;
+        advisor_fail_category: string | null;
       }
     | undefined;
   if (!run) throw new Error(`run not found: ${runId}`);
@@ -209,6 +229,9 @@ export function getRunDetails(db: Database, runId: string) {
     plan: run.plan,
     codexFailReason: run.codex_fail_reason,
     codexFailCategory: run.codex_fail_category,
+    advisorReport: run.advisor_report,
+    advisorFailReason: run.advisor_fail_reason,
+    advisorFailCategory: run.advisor_fail_category,
   };
 }
 
@@ -237,9 +260,11 @@ export interface RunStatusRecord {
   projectDir: string; // the project's root path — tells the user WHICH project a resumable run belongs to
   status: string;
   createdAt: string;
-  artifacts: { brief: boolean; claudeReport: boolean; codexReport: boolean; plan: boolean };
+  artifacts: { brief: boolean; claudeReport: boolean; codexReport: boolean; plan: boolean; advisorReport: boolean };
   codexFailReason: string | null;
   codexFailCategory: string | null;
+  advisorFailReason: string | null;
+  advisorFailCategory: string | null;
 }
 
 interface RunStatusRow {
@@ -253,17 +278,22 @@ interface RunStatusRow {
   has_claude: number;
   has_codex: number;
   has_plan: number;
+  has_advisor: number;
   codex_fail_reason: string | null;
   codex_fail_category: string | null;
+  advisor_fail_reason: string | null;
+  advisor_fail_category: string | null;
 }
 
 const RUN_STATUS_COLUMNS = `
   r.id, r.title, r.project_id, r.status, r.created_at,
-  r.codex_fail_reason, r.codex_fail_category, p.root_path,
-  (r.brief IS NOT NULL)         AS has_brief,
-  (r.claude_report IS NOT NULL) AS has_claude,
-  (r.codex_report IS NOT NULL)  AS has_codex,
-  (r.plan IS NOT NULL)          AS has_plan`;
+  r.codex_fail_reason, r.codex_fail_category,
+  r.advisor_fail_reason, r.advisor_fail_category, p.root_path,
+  (r.brief IS NOT NULL)          AS has_brief,
+  (r.claude_report IS NOT NULL)  AS has_claude,
+  (r.codex_report IS NOT NULL)   AS has_codex,
+  (r.plan IS NOT NULL)           AS has_plan,
+  (r.advisor_report IS NOT NULL) AS has_advisor`;
 
 function toRunStatusRecord(row: RunStatusRow): RunStatusRecord {
   return {
@@ -278,9 +308,12 @@ function toRunStatusRecord(row: RunStatusRow): RunStatusRecord {
       claudeReport: row.has_claude === 1,
       codexReport: row.has_codex === 1,
       plan: row.has_plan === 1,
+      advisorReport: row.has_advisor === 1,
     },
     codexFailReason: row.codex_fail_reason,
     codexFailCategory: row.codex_fail_category,
+    advisorFailReason: row.advisor_fail_reason,
+    advisorFailCategory: row.advisor_fail_category,
   };
 }
 

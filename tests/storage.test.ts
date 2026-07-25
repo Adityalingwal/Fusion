@@ -33,7 +33,7 @@ test("run content roundtrips via getRunDetails", async () => {
   expect(d.createdAt).toBeTruthy();
 });
 
-test("schema has only projects and titled runs with embedded content + codex-failure columns", async () => {
+test("schema has only projects and titled runs with embedded content + failure columns", async () => {
   const { db } = await freshDb();
   const tables = db
     .query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -53,8 +53,11 @@ test("schema has only projects and titled runs with embedded content + codex-fai
     "plan",
     "codex_fail_reason",
     "codex_fail_category",
+    "advisor_report",
+    "advisor_fail_reason",
+    "advisor_fail_category",
   ]);
-  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(1);
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(2);
   const titleColumn = (db.query(`PRAGMA table_info(runs)`).all() as Array<{
     name: string;
     notnull: number;
@@ -80,6 +83,85 @@ test("a DB stamped with an unknown schema version refuses to open instead of run
   process.env.FUSION_DB = dbFile;
 
   expect(() => storage.open()).toThrow("unsupported Fusion DB schema version 3");
+});
+
+test("v1 → v2 migration: opening a v1 DB adds the advisor columns and keeps existing data intact", async () => {
+  const dir = await makeTempDir();
+  const dbFile = join(dir, "v1.db");
+  // Build a real v1 DB by hand (the exact pre-advisor schema), with data in every v1 column.
+  const v1 = new Database(dbFile, { create: true });
+  v1.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, root_path TEXT, created_at TEXT);
+    CREATE TABLE runs (
+      id                  TEXT PRIMARY KEY,
+      project_id          TEXT NOT NULL REFERENCES projects(id),
+      title               TEXT NOT NULL DEFAULT 'Untitled run',
+      status              TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
+      created_at          TEXT NOT NULL,
+      brief               TEXT,
+      claude_report       TEXT,
+      codex_report        TEXT,
+      plan                TEXT,
+      codex_fail_reason   TEXT,
+      codex_fail_category TEXT
+    );
+    CREATE INDEX idx_runs_project ON runs(project_id, created_at DESC);
+  `);
+  v1.query(`INSERT INTO projects VALUES ('p1', 'proj', '/x/proj', '2026-01-01T00:00:00.000Z')`).run();
+  v1.query(
+    `INSERT INTO runs VALUES ('r1', 'p1', 'Old run', 'completed', '2026-01-02T00:00:00.000Z',
+     'the brief', 'claude leg', 'codex leg', 'the plan', '429 too many requests', 'quota')`,
+  ).run();
+  v1.exec("PRAGMA user_version = 1;");
+  v1.close();
+
+  // Opening with the new code migrates in place: columns exist, version stamped, v1 data intact.
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const columns = (db.query(`PRAGMA table_info(runs)`).all() as Array<{ name: string }>).map((c) => c.name);
+  expect(columns).toContain("advisor_report");
+  expect(columns).toContain("advisor_fail_reason");
+  expect(columns).toContain("advisor_fail_category");
+  expect((db.query(`PRAGMA user_version`).get() as { user_version: number }).user_version).toBe(2);
+
+  const detail = storage.getRunDetails(db, "r1");
+  expect(detail.brief).toBe("the brief");
+  expect(detail.claudeReport).toBe("claude leg");
+  expect(detail.codexReport).toBe("codex leg");
+  expect(detail.plan).toBe("the plan");
+  expect(detail.codexFailReason).toBe("429 too many requests");
+  expect(detail.codexFailCategory).toBe("quota");
+  expect(detail.status).toBe("completed");
+  expect(detail.advisorReport).toBeNull();
+  expect(detail.advisorFailReason).toBeNull();
+
+  // The migrated DB is fully writable through the advisor paths.
+  storage.putArtifact(db, "r1", "advisor_report", "VERDICT: APPROVE");
+  expect(storage.getArtifact(db, "r1", "advisor_report")).toBe("VERDICT: APPROVE");
+});
+
+test("recordAdvisorFailure and clearAdvisorFailure round-trip independently of the advisor_report slot", async () => {
+  const { db } = await freshDb();
+  storage.ensureProject(db, { id: "p1", name: "proj", root: "/x" });
+  storage.startRun(db, { runId: "r1", projectId: "p1" });
+  storage.putArtifact(db, "r1", "advisor_report", "raw verdict text");
+
+  storage.recordAdvisorFailure(db, "r1", "timed out after 900000ms", "transient");
+  let detail = storage.getRunDetails(db, "r1");
+  expect(detail.advisorFailReason).toContain("timed out");
+  expect(detail.advisorFailCategory).toBe("transient");
+  expect(detail.advisorReport).toBe("raw verdict text"); // the marker never clears the report slot
+
+  storage.clearAdvisorFailure(db, "r1");
+  detail = storage.getRunDetails(db, "r1");
+  expect(detail.advisorFailReason).toBeNull();
+  expect(detail.advisorFailCategory).toBeNull();
+
+  // Status records expose advisor presence + the failure marker for the resume validity rule.
+  const record = storage.getRunStatusRecord(db, "r1")!;
+  expect(record.artifacts.advisorReport).toBe(true);
+  expect(record.advisorFailReason).toBeNull();
+  expect(record.advisorFailCategory).toBeNull();
 });
 
 test("recordCodexFailure and clearCodexFailure round-trip the drop reason on a run row", async () => {
@@ -200,7 +282,7 @@ test("getIncompleteRuns lists only running runs newest-first with artifact prese
   expect(incomplete.map((r) => r.runId)).toEqual(["new", "old"]); // newest first, no completed run
   const newRun = incomplete[0];
   expect(newRun.projectDir).toBe("/repo/proj");
-  expect(newRun.artifacts).toEqual({ brief: true, claudeReport: true, codexReport: false, plan: false });
+  expect(newRun.artifacts).toEqual({ brief: true, claudeReport: true, codexReport: false, plan: false, advisorReport: false });
   expect(newRun.codexFailReason).toContain("429");
   expect(newRun.codexFailCategory).toBe("quota");
 

@@ -35,6 +35,9 @@ if (args[0] === "login" && args[1] === "status") {
 }
 if (args[0] === "exec") {
   const stdin = await record();
+  // Simulate a hung/slow codex: sleep before answering so tests can drive a REAL runner timeout
+  // (the runner SIGTERMs us mid-sleep).
+  if (process.env.FAKE_CODEX_SLEEP_MS) await Bun.sleep(Number(process.env.FAKE_CODEX_SLEEP_MS));
   // Simulate a real codex failure: it reports the cause as a JSON error event on STDOUT (stderr stays
   // empty) — the same shape extractCodexError parses — then exits non-zero. Lets tests drive the
   // runner's classification (e.g. a quota/429 message) end-to-end.
@@ -47,8 +50,9 @@ if (args[0] === "exec") {
   }
   const outputFlag = args.includes("-o") ? "-o" : "--output-last-message";
   const outIndex = args.indexOf(outputFlag);
-  // Echo READY when the prompt asks for it (the preflight model ping), else the configured/default output.
-  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CODEX_OUTPUT || "codex ok");
+  // Echo READY when the prompt asks for it (the preflight model ping), else the configured/default
+  // output. \`??\` (not \`||\`): an explicitly-empty FAKE_CODEX_OUTPUT means "write an empty file".
+  const output = /READY/i.test(stdin) ? "READY" : (process.env.FAKE_CODEX_OUTPUT ?? "codex ok");
   if (outIndex >= 0) await writeFile(args[outIndex + 1], output, "utf8");
   process.exit(Number(process.env.FAKE_CODEX_EXIT || "0"));
 }

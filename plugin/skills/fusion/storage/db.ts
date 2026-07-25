@@ -51,13 +51,15 @@ function openConfigured(path: string): Database {
   }
 }
 
-// Current on-disk schema, built directly by the CREATE below — Fusion is pre-release, so there is
-// no migration machinery yet; that starts when real users exist and this number moves past 1.
-const SCHEMA_VERSION = 1;
+// Current on-disk schema. v2 added the advisor columns (advisor_report + its failure marker); a v1
+// DB is migrated in place below via ALTER TABLE, which never rewrites or deletes existing rows.
+const SCHEMA_VERSION = 2;
+
+const ADVISOR_COLUMNS = ["advisor_report", "advisor_fail_reason", "advisor_fail_category"] as const;
 
 function initSchema(db: Database): void {
   const version = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
-  if (version !== 0 && version !== SCHEMA_VERSION) {
+  if (version !== 0 && version !== 1 && version !== SCHEMA_VERSION) {
     throw new Error(`unsupported Fusion DB schema version ${version}`);
   }
   db.exec(`
@@ -68,20 +70,33 @@ function initSchema(db: Database): void {
       created_at TEXT
     );
     CREATE TABLE IF NOT EXISTS runs (
-      id                  TEXT PRIMARY KEY,
-      project_id          TEXT NOT NULL REFERENCES projects(id),
-      title               TEXT NOT NULL DEFAULT 'Untitled run',
-      status              TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
-      created_at          TEXT NOT NULL,
-      brief               TEXT,
-      claude_report       TEXT,
-      codex_report        TEXT,
-      plan                TEXT,
-      codex_fail_reason   TEXT,
-      codex_fail_category TEXT
+      id                    TEXT PRIMARY KEY,
+      project_id            TEXT NOT NULL REFERENCES projects(id),
+      title                 TEXT NOT NULL DEFAULT 'Untitled run',
+      status                TEXT NOT NULL CHECK (status IN ('running', 'completed', 'aborted')),
+      created_at            TEXT NOT NULL,
+      brief                 TEXT,
+      claude_report         TEXT,
+      codex_report          TEXT,
+      plan                  TEXT,
+      codex_fail_reason     TEXT,
+      codex_fail_category   TEXT,
+      advisor_report        TEXT,
+      advisor_fail_reason   TEXT,
+      advisor_fail_category TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at DESC);
   `);
+  if (version === 1) {
+    // v1 → v2: add the advisor columns (SQLite allows one column per ALTER). Guarded per-column so
+    // a concurrent cold-start migration can never fail on "duplicate column name".
+    const existing = new Set(
+      (db.query(`PRAGMA table_info(runs)`).all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    for (const column of ADVISOR_COLUMNS) {
+      if (!existing.has(column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} TEXT;`);
+    }
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }
 

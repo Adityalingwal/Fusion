@@ -26,6 +26,7 @@ const OPTIONS_BY_COMMAND = {
     "brief-file": stringOption,
     "timeout-ms": stringOption,
   },
+  advise: { "run-id": stringOption, "timeout-ms": stringOption },
   finish: { "run-id": stringOption },
   export: { "run-id": stringOption, type: stringOption, out: stringOption },
   list: {},
@@ -158,6 +159,11 @@ async function execute(command: Command, args: CliValues): Promise<void> {
     case "put": {
       const runId = requiredString(args, "run-id");
       const type = requiredArtifactType(args);
+      // advisor_report is runner-owned: only the advise runner writes it (the same way relay writes
+      // codex_report), so a stray public put can never masquerade as a real verdict. `get` stays open.
+      if (type === "advisor_report") {
+        throw new CliError("advisor_report is runner-owned — run advise instead");
+      }
       const db = storage.open();
       ensureRunExists(db, runId);
       const content = await readInput(optionalString(args, "file"));
@@ -208,6 +214,57 @@ async function execute(command: Command, args: CliValues): Promise<void> {
         }
         throw new CliError(`relay failed with exit code ${result.code}`);
       }
+      writeJson({ ok: true, command, ...lastJsonObject(result.stdout) });
+      return;
+    }
+    case "advise": {
+      // The advisor final check (SKILL.md step 8). Uniform JSON outcome contract — advise ALWAYS
+      // ends with one stdout JSON line: success → {advisorAvailable:true, mode, verdict} exit 0 ·
+      // any advisor drop (codex fail/timeout/malformed/skip-size) → {advisorAvailable:false,
+      // reason, category} exit 0 (fail-open by design) · ordering-guard refusal → the same JSON
+      // shape with a non-zero exit. No stderr-only error path for advise outcomes.
+      const runId = requiredString(args, "run-id");
+      const db = storage.open();
+      const refuse = (reason: string): void => {
+        writeJson({ ok: false, command, advisorAvailable: false, reason, category: "fixable" });
+        process.exitCode = 1;
+      };
+      if (storage.getRunProjectId(db, runId) === null) {
+        refuse(`run not found: ${runId}`);
+        return;
+      }
+      // Ordering guard: advise reads everything from the DB, so an unsaved plan (or brief) means
+      // there is nothing to review — refuse cleanly instead of sending a hollow packet.
+      if (storage.getArtifact(db, runId, "brief") === null) {
+        refuse("brief missing — save the brief first");
+        return;
+      }
+      if (storage.getArtifact(db, runId, "plan") === null) {
+        refuse("plan missing — save the plan draft first");
+        return;
+      }
+      const childArgs = ["--leg", "advisor", "--run-id", runId];
+      const timeoutMs = optionalString(args, "timeout-ms");
+      if (timeoutMs) childArgs.push("--timeout-ms", timeoutMs);
+      const result = await runInternal("runner.ts", childArgs);
+      if (result.code !== 0) {
+        // Mirror relay: a fatal runner path still ends with a JSON receipt — relay it as a failure
+        // summary; only a truly silent child falls through to the generic throw.
+        let summary: Record<string, unknown> | null = null;
+        try {
+          summary = lastJsonObject(result.stdout);
+        } catch {
+          summary = null;
+        }
+        if (summary) {
+          writeJson({ ok: false, command, ...summary });
+          process.exitCode = 1;
+          return;
+        }
+        throw new CliError(`advise failed with exit code ${result.code}`);
+      }
+      // Exit 0 covers both the success and the fail-open drop (advisorAvailable:false) — the
+      // command itself completed; the summary line carries whether the advisor actually ran.
       writeJson({ ok: true, command, ...lastJsonObject(result.stdout) });
       return;
     }
