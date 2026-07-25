@@ -449,6 +449,36 @@ test("advise ordering guard: missing plan (or run) refuses with a JSON outcome a
   expect((await readLogs(log)).filter((entry) => entry.tool === "codex")).toHaveLength(0);
 });
 
+test("advise ordering guard: missing brief refuses with its tailored reason", async () => {
+  const root = await makeTempDir();
+  const { bin, log } = await makeFakeBin(root);
+  const project = join(root, "project");
+  const dbFile = join(root, "advise-brief-guard.db");
+  await mkdir(project, { recursive: true });
+
+  process.env.FUSION_DB = dbFile;
+  const db = storage.open();
+  const proj = await storage.resolveProject(project);
+  storage.ensureProject(db, proj);
+  storage.startRun(db, { runId: "brief-guard-run", projectId: proj.id });
+  // Plan present but NO brief — the guard's third tailored refusal.
+  storage.putArtifact(db, "brief-guard-run", "plan", "the plan");
+
+  const refused = await runBun(fusionPath, ["advise", "--run-id", "brief-guard-run"], {
+    cwd: project,
+    bin,
+    log,
+    env: { FUSION_DB: dbFile },
+  });
+  expect(refused.code).not.toBe(0);
+  const outcome = json(refused.stdout);
+  expect(outcome.ok).toBe(false);
+  expect(outcome.advisorAvailable).toBe(false);
+  expect(outcome.reason).toBe("brief missing — save the brief first");
+  expect(outcome.category).toBe("fixable");
+  expect((await readLogs(log)).filter((entry) => entry.tool === "codex")).toHaveLength(0);
+});
+
 test("public put refuses the runner-owned advisor_report type", async () => {
   const root = await makeTempDir();
   const { bin, log } = await makeFakeBin(root);

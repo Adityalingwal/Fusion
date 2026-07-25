@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as storage from "../storage";
 import { lastStderr, runProc } from "../lib/subprocess";
-import { buildCodexArgs, classifyCodexFailure, extractCodexError } from "./codex";
+import {
+  NOT_INSTALLED_PATTERN,
+  NOT_LOGGED_IN_PATTERN,
+  QUOTA_PATTERN,
+  STALE_CLI_PATTERN,
+  buildCodexArgs,
+  classifyCodexFailure,
+  extractCodexError,
+} from "./codex";
 import {
   buildAdvisorPrompt,
   extractVerdict,
@@ -37,21 +45,22 @@ export function advisorOutPath(runId: string): string {
   return join(tmpdir(), `fusion-advisor-${safeRunId}-${process.pid}-${crypto.randomUUID()}.txt`);
 }
 
-// The advisor reuses the relay's failure CLASSIFICATION (classifyCodexFailure) but not its message
-// text: advisor reasons are single-line and advise-appropriate — the host shows exactly one plain
-// line and the fix is "re-run advise", never "run /fusion again".
+// The advisor reuses the relay's failure CLASSIFICATION (classifyCodexFailure) and its detection
+// patterns (shared constants in runner/codex.ts) but not its message text: advisor reasons are
+// single-line and advise-appropriate — the host shows exactly one plain line and the fix is
+// "re-run advise", never "run /fusion again".
 export function advisorFailureReason(message: string): string {
   const oneLine = message.replace(/\s*\n\s*/g, " ").trim();
-  if (/insufficient credit|usage limit|quota|\b429\b|too many requests|rate limit/i.test(oneLine)) {
+  if (QUOTA_PATTERN.test(oneLine)) {
     return "GPT quota exhausted — re-run advise after it resets";
   }
-  if (/executable not found|not found in \$?path|\benoent\b|no such file/i.test(oneLine)) {
+  if (NOT_INSTALLED_PATTERN.test(oneLine)) {
     return "Codex isn't installed (or not on PATH) — install: npm i -g @openai/codex, then: codex login";
   }
-  if (/newer version of codex|requires a newer version|upgrade the cli|unexpected argument|unrecognized option/i.test(oneLine)) {
+  if (STALE_CLI_PATTERN.test(oneLine)) {
     return "Codex CLI is stale — update: npm i -g @openai/codex@latest, then re-run advise";
   }
-  if (/not logged in|not authenticated|unauthorized|\b401\b/i.test(oneLine)) {
+  if (NOT_LOGGED_IN_PATTERN.test(oneLine)) {
     return "Codex isn't logged in — run: codex login, then re-run advise";
   }
   return oneLine;
@@ -111,11 +120,12 @@ export async function runAdvisorLeg(
     } catch (readErr) {
       throw new Error(`could not read codex output: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
     }
-    if (!text) throw new Error("empty final message");
-    const verdict = extractVerdict(text);
-    // Malformed verdict: the raw text is STILL saved (debugging), but the failure marker stays set
-    // so the host never folds it — resume decides by the marker, not by artifact presence.
+    // Malformed OR empty verdict: the raw text is STILL saved (debugging) — saved FIRST, so an
+    // empty output also evicts a stale previous report and the on-demand fetch always shows the
+    // latest attempt. The failure marker stays set so the host never folds it — resume decides by
+    // the marker, not by artifact presence.
     storage.putArtifact(db, runId, "advisor_report", text);
+    const verdict = extractVerdict(text);
     if (verdict === null) {
       const reason = "malformed verdict — the advisor output has no VERDICT line";
       storage.recordAdvisorFailure(db, runId, reason, "unknown");

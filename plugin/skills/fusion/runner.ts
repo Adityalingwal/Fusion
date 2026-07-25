@@ -119,7 +119,7 @@ async function advisorMain(args: StringArgs): Promise<void> {
 
   const summary = advisor.status === "ok"
     ? { runId, advisorAvailable: true, mode: advisor.mode, verdict: advisor.verdict, ...(advisor.degradedReason ? { degradedReason: advisor.degradedReason } : {}) }
-    : { runId, advisorAvailable: false, ...(advisor.mode ? { mode: advisor.mode } : {}), reason: advisor.reason, category: advisor.category };
+    : { runId, advisorAvailable: false, ...(advisor.mode ? { mode: advisor.mode } : {}), ...(advisor.degradedReason ? { degradedReason: advisor.degradedReason } : {}), reason: advisor.reason, category: advisor.category };
   console.log(JSON.stringify(summary));
 }
 

@@ -112,6 +112,78 @@ test("advisor malformed verdict: fail-open, raw text STILL saved for debugging, 
   expect(detail.advisorFailReason).toContain("malformed verdict"); // but marked invalid — never folded
 });
 
+test("advisor empty output: treated as malformed — the empty raw evicts a stale report, marker set", async () => {
+  const ctx = await seedRun("adv-empty", { brief: "the brief", plan: "the plan" });
+  // A stale verdict from a previous attempt: the empty overwrite must evict it, so the on-demand
+  // raw fetch always reflects the LATEST attempt (unlike a codex-level failure, which keeps it).
+  storage.putArtifact(ctx.db, "adv-empty", "advisor_report", APPROVED);
+
+  const result = await runBun(runnerPath, ["--leg", "advisor", "--run-id", "adv-empty", "--timeout-ms", "5000"], {
+    cwd: ctx.project,
+    bin: ctx.bin,
+    log: ctx.log,
+    env: { FUSION_DB: ctx.dbFile, FAKE_CODEX_OUTPUT: "" },
+  });
+
+  expect(result.code).toBe(0); // fail-open
+  const summary = summaryOf(result.stdout);
+  expect(summary.advisorAvailable).toBe(false);
+  expect(summary.reason).toContain("malformed verdict");
+  expect(summary.category).toBe("unknown");
+
+  const detail = storage.getRunDetails(ctx.db, "adv-empty");
+  expect(detail.advisorReport).toBe(""); // raw (empty) saved — the stale report is gone
+  expect(detail.advisorFailReason).toContain("malformed verdict");
+});
+
+test("advisor timeout: classified transient, marker recorded, previous report survives", async () => {
+  const ctx = await seedRun("adv-timeout", { brief: "the brief", plan: "the plan" });
+  storage.putArtifact(ctx.db, "adv-timeout", "advisor_report", APPROVED);
+
+  const result = await runBun(runnerPath, ["--leg", "advisor", "--run-id", "adv-timeout", "--timeout-ms", "500"], {
+    cwd: ctx.project,
+    bin: ctx.bin,
+    log: ctx.log,
+    // The fake codex sleeps far past the 500ms ceiling — runProc SIGTERMs it mid-sleep.
+    env: { FUSION_DB: ctx.dbFile, FAKE_CODEX_SLEEP_MS: "30000", FAKE_CODEX_OUTPUT: APPROVED },
+  });
+
+  expect(result.code).toBe(0); // fail-open
+  const summary = summaryOf(result.stdout);
+  expect(summary.advisorAvailable).toBe(false);
+  expect(summary.reason).toBe("timed out after 500ms");
+  expect(summary.category).toBe("transient");
+
+  const detail = storage.getRunDetails(ctx.db, "adv-timeout");
+  expect(detail.advisorReport).toBe(APPROVED); // a timeout never touches the report slot
+  expect(detail.advisorFailReason).toBe("timed out after 500ms");
+  expect(detail.advisorFailCategory).toBe("transient");
+});
+
+test("advisor failed single-degraded: degradedReason survives into the failure summary", async () => {
+  const big = "x".repeat(300 * 1024); // 2 × 300 KB reports push the combined packet past 500 KB
+  const ctx = await seedRun("adv-degraded-fail", {
+    brief: "the brief",
+    claude_report: big,
+    codex_report: big,
+    plan: "the plan",
+  });
+
+  const result = await runBun(runnerPath, ["--leg", "advisor", "--run-id", "adv-degraded-fail", "--timeout-ms", "5000"], {
+    cwd: ctx.project,
+    bin: ctx.bin,
+    log: ctx.log,
+    env: { FUSION_DB: ctx.dbFile, FAKE_CODEX_EXIT: "1", FAKE_CODEX_ERROR: "429 too many requests" },
+  });
+
+  expect(result.code).toBe(0);
+  const summary = summaryOf(result.stdout);
+  expect(summary.advisorAvailable).toBe(false);
+  expect(summary.mode).toBe("single-degraded");
+  expect(summary.degradedReason).toBe("size"); // the size fallback is never silent, even on a drop
+  expect(summary.category).toBe("quota");
+});
+
 test("advisor failed retry: the previous report survives, only the failure marker is stamped", async () => {
   const ctx = await seedRun("adv-retry", { brief: "the brief", plan: "the plan" });
   // A previous successful attempt left a valid verdict in the slot.
