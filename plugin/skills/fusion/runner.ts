@@ -43,7 +43,7 @@ function resolvePath(baseDir: string, p: string): string {
 // Ceiling, not a fixed wait: runProc returns the instant codex exits (subprocess.ts raceDeadline),
 // so a larger default never slows a fast run — it only gives a genuinely long plan room to finish
 // before the timeout SIGTERM. 20 min balances that headroom against how long a truly-hung leg
-// stalls the host at SKILL.md step 7. Override per-run via --timeout-ms / FUSION_TIMEOUT_MS.
+// stalls the host at SKILL.md step 6. Override per-run via --timeout-ms / FUSION_TIMEOUT_MS.
 const DEFAULT_TIMEOUT_MS = 1_200_000;
 function parseTimeoutMs(raw: string | undefined): number {
   if (raw === undefined) return DEFAULT_TIMEOUT_MS;
