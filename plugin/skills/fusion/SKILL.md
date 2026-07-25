@@ -11,8 +11,9 @@ description: >-
 # Fusion — Claude + Codex (PLAN before code)
 
 ## Storage
-Run content (the brief, both leg reports, and the plan — draft first, the final
-version overwrites it) lives in one SQLite DB at `~/.fusion/fusion.db`; nothing is
+Run content (the brief, both leg reports, the advisor verdict, and the plan —
+draft first, the final version overwrites it) lives in one SQLite DB at
+`~/.fusion/fusion.db`; nothing is
 written into the project directory. Talk to it only through the bundled CLI
 `bun "${CLAUDE_SKILL_DIR}/fusion.ts" <command>` (`${CLAUDE_SKILL_DIR}` is supplied by Claude Code):
 - `start --title "<concise task title>"` — run the GPT preflight gate, then create the run; read `runId` from its JSON (`--title` is optional at the CLI boundary, but the workflow always supplies it).
