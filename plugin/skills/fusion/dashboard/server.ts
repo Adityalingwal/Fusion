@@ -93,10 +93,28 @@ export async function getProjects() {
 // is readable; the header is labelled with the run's OWN project name (which may differ from the
 // launched project). storage.getRunDetails throws "run not found: <id>" for an unknown id → the
 // caller maps that to 404 and any other throw (broken DB) to 500.
+//
+// Allowlisted DTO: the dashboard shows ONLY the four planning artifacts plus run metadata and the
+// Codex drop reason. advisor_report / advisor_fail_* are internal-only by requirement and must
+// never appear in any dashboard API response — fields are listed explicitly instead of spreading
+// the full storage record, so a future storage column can't leak here silently.
 export async function getRunDetails(runId: string) {
   const details = storage.getRunDetails(db(), runId);
   const project = storage.getProject(db(), details.projectId);
-  return { ...details, projectName: project?.name ?? "this project" };
+  return {
+    runId: details.runId,
+    projectId: details.projectId,
+    title: details.title,
+    status: details.status,
+    createdAt: details.createdAt,
+    brief: details.brief,
+    claudeReport: details.claudeReport,
+    codexReport: details.codexReport,
+    plan: details.plan,
+    codexFailReason: details.codexFailReason,
+    codexFailCategory: details.codexFailCategory,
+    projectName: project?.name ?? "this project",
+  };
 }
 
 // Delete a run row and its embedded content. Any local run is deletable from the multi-project view.

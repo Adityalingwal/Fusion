@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
-// Fusion runner (v1) — orchestrates the EXTERNAL relay of a Fusion run:
-//   - Codex via `codex exec`  (ChatGPT subscription → zero API cost)
+// Fusion runner (v1) — orchestrates the EXTERNAL Codex legs of a Fusion run
+// (via `codex exec` — ChatGPT subscription → zero API cost). Two legs, selected by --leg:
+//   - relay (default): the blind Codex planning leg (steps 4-6)
+//   - advisor: the blind final check of the synthesized plan (step 8)
 //
 // It deliberately does NOT run the Claude leg or the synthesis. The host Claude Code session
 // contributes its own (Claude) leg and does the final synthesis via the skill — a runner subprocess
@@ -23,15 +25,18 @@
 //   bun runner.ts --run-id <id> [--title <title>] [--project-dir <dir>] [--brief-file <path>]
 //                 [--timeout-ms <n>]
 //   (the brief may also be piped on stdin instead of --brief-file)
+//   bun runner.ts --leg advisor --run-id <id> [--timeout-ms <n>]
+//   (the advisor leg reads everything — including the project dir — from the DB)
 
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Database } from "bun:sqlite";
 import { runCodexLeg } from "./runner/codex";
+import { DEFAULT_ADVISOR_TIMEOUT_MS, runAdvisorLeg } from "./runner/advisor";
 import { parseStringArgs, type StringArgs } from "./lib/args";
 import * as storage from "./storage";
 
-const RUNNER_ARG_NAMES = ["run-id", "title", "project-dir", "brief-file", "timeout-ms"] as const;
+const RUNNER_ARG_NAMES = ["leg", "run-id", "title", "project-dir", "brief-file", "timeout-ms"] as const;
 
 function resolvePath(baseDir: string, p: string): string {
   return isAbsolute(p) ? p : join(baseDir, p);
@@ -45,12 +50,12 @@ function resolvePath(baseDir: string, p: string): string {
 // before the timeout SIGTERM. 20 min balances that headroom against how long a truly-hung leg
 // stalls the host at SKILL.md step 6. Override per-run via --timeout-ms / FUSION_TIMEOUT_MS.
 const DEFAULT_TIMEOUT_MS = 1_200_000;
-function parseTimeoutMs(raw: string | undefined): number {
-  if (raw === undefined) return DEFAULT_TIMEOUT_MS;
+function parseTimeoutMs(raw: string | undefined, defaultMs: number): number {
+  if (raw === undefined) return defaultMs;
   const t = Number(raw);
   if (Number.isFinite(t) && t > 0) return t;
-  console.error(`fusion-runner: invalid timeout '${raw}' — using default ${DEFAULT_TIMEOUT_MS}ms`);
-  return DEFAULT_TIMEOUT_MS;
+  console.error(`fusion-runner: invalid timeout '${raw}' — using default ${defaultMs}ms`);
+  return defaultMs;
 }
 
 // Brief source: the persisted DB artifact first (the host writes it before launching us), then
@@ -75,22 +80,60 @@ async function readBrief(
   return await Bun.stdin.text();
 }
 
-// Hoisted so the fatal-path handlers below can attach it to the receipt. Null until parsed — a crash
-// before parsing still emits a receipt, just with runId: null.
+// Hoisted so the fatal-path handlers below can attach them to the receipt. runId is null until
+// parsed — a crash before parsing still emits a receipt, just with runId: null.
 let runId: string | null = null;
+let leg: "relay" | "advisor" = "relay";
 
 // The runner's hard spec constraint: it must ALWAYS end with a machine-readable JSON summary line on
 // stdout, even on a fatal path, so the host gets a reason + category instead of a bare exit code.
+// The availability key matches the leg's summary contract (codexAvailable vs advisorAvailable).
 function printReceipt(reason: string): void {
-  console.log(JSON.stringify({ runId, codexAvailable: false, reason, category: "unknown" }));
+  const availability = leg === "advisor" ? { advisorAvailable: false } : { codexAvailable: false };
+  console.log(JSON.stringify({ runId, ...availability, reason, category: "unknown" }));
+}
+
+// The advisor leg. Unlike relay, the project dir is resolved from the DB (the run's stored
+// projects.root_path), NEVER from the invocation cwd — a resumed session elsewhere would silently
+// point codex at the wrong repo. The advise CLI enforces the run-exists + brief/plan ordering
+// guard before spawning us; runAdvisorLeg backstops both.
+async function advisorMain(args: StringArgs): Promise<void> {
+  const db = storage.open();
+  const projectId = storage.getRunProjectId(db, runId!);
+  const projectDir = projectId === null ? null : storage.getProject(db, projectId)?.root || null;
+  if (projectDir === null) {
+    const reason = projectId === null ? `run not found: ${runId}` : `project directory unknown for run ${runId}`;
+    console.error(`fusion-runner: ${reason}`);
+    printReceipt(reason);
+    process.exit(2);
+  }
+  const timeoutMs = parseTimeoutMs(args["timeout-ms"], DEFAULT_ADVISOR_TIMEOUT_MS);
+
+  console.error(`fusion-runner: advisor for run ${runId} → ${storage.dbPath()}`);
+  console.error(`fusion-runner: launching codex advisor (timeout ${timeoutMs}ms)…`);
+
+  const advisor = await runAdvisorLeg(db, runId!, projectDir, timeoutMs);
+
+  console.error(`fusion-runner: advisor=${advisor.status}${advisor.mode ? ` (mode ${advisor.mode})` : ""}`);
+  if (advisor.status === "failed") console.error(`  advisor dropped: ${advisor.reason}`);
+
+  const summary = advisor.status === "ok"
+    ? { runId, advisorAvailable: true, mode: advisor.mode, verdict: advisor.verdict, ...(advisor.degradedReason ? { degradedReason: advisor.degradedReason } : {}) }
+    : { runId, advisorAvailable: false, ...(advisor.mode ? { mode: advisor.mode } : {}), reason: advisor.reason, category: advisor.category };
+  console.log(JSON.stringify(summary));
 }
 
 async function main(): Promise<void> {
   const args = parseStringArgs(process.argv.slice(2), RUNNER_ARG_NAMES, "fusion-runner");
   runId = args["run-id"] || crypto.randomUUID();
+  if (args.leg === "advisor") {
+    leg = "advisor";
+    await advisorMain(args);
+    return;
+  }
   const invocationDir = process.cwd();
   const projectDir = args["project-dir"] ? resolvePath(invocationDir, args["project-dir"]) : invocationDir;
-  const timeoutMs = parseTimeoutMs(args["timeout-ms"] || process.env.FUSION_TIMEOUT_MS);
+  const timeoutMs = parseTimeoutMs(args["timeout-ms"] || process.env.FUSION_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
 
   const db = storage.open();
   const proj = await storage.resolveProject(projectDir);

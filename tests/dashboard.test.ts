@@ -90,6 +90,54 @@ test("dashboard functions retrieve and delete runs correctly", async () => {
   expect(listAfterDelete).toHaveLength(0);
 });
 
+test("dashboard API never exposes advisor data: the run DTO is allowlisted", async () => {
+  const root = await tempDir();
+  const project = join(root, "project");
+  await mkdir(project, { recursive: true });
+  process.env.FUSION_DB = join(root, "advisor-hidden.db");
+
+  const db = storage.open();
+  const projectInfo = await storage.resolveProject(project);
+  storage.ensureProject(db, projectInfo);
+  storage.startRun(db, { runId: "advised-run", projectId: projectInfo.id, title: "Advised plan" });
+  storage.putArtifact(db, "advised-run", "brief", "brief-content");
+  storage.putArtifact(db, "advised-run", "plan", "plan-synthesis");
+  // Both advisor slots populated — none of it may reach any dashboard response.
+  storage.putArtifact(db, "advised-run", "advisor_report", "VERDICT: NEEDS-REWORK");
+  storage.recordAdvisorFailure(db, "advised-run", "malformed verdict", "unknown");
+
+  setProjectDir(project);
+
+  const response = await handleRequest(
+    new Request("http://localhost:38888/api/runs/advised-run", { headers: { host: "localhost:38888" } }),
+  );
+  expect(response.status).toBe(200);
+  const dto = (await response.json()) as Record<string, unknown>;
+  // The allowlist: exactly these fields, nothing advisor-shaped.
+  expect(Object.keys(dto).sort()).toEqual([
+    "brief",
+    "claudeReport",
+    "codexFailCategory",
+    "codexFailReason",
+    "codexReport",
+    "createdAt",
+    "plan",
+    "projectId",
+    "projectName",
+    "runId",
+    "status",
+    "title",
+  ]);
+  expect(JSON.stringify(dto)).not.toContain("advisor");
+  expect(JSON.stringify(dto)).not.toContain("NEEDS-REWORK");
+
+  // The runs list stays advisor-free too.
+  const list = await handleRequest(
+    new Request("http://localhost:38888/api/runs", { headers: { host: "localhost:38888" } }),
+  );
+  expect(JSON.stringify(await list.json())).not.toContain("advisor");
+});
+
 test("getProjects lists every project, flags + sorts the launched one on top, and getRuns scopes by id", async () => {
   const root = await tempDir();
   const alpha = join(root, "alpha");
